@@ -82,7 +82,7 @@ module dftbp_mainio
   public :: printMdInfo, printBlankLine
   public :: printReksSccHeader, printReksSccInfo
   public :: writeReksDetailedOut1
-  public :: readEigenvecs
+  public :: readEigenvecs, readRealEigvecTxt
 #:if WITH_SOCKETS
   public :: receiveGeometryFromSocket
 #:endif
@@ -5535,4 +5535,60 @@ contains
     end select
 
   end subroutine writeCosmoFile
+
+  subroutine readRealEigvecTxt(fd, eigvec, iS, iEigvec, orb, species, nAtom)
+
+    !> File descriptor of open file
+    integer, intent(in) :: fd
+
+    !> Eigenvector to read
+    real(dp), intent(out) :: eigvec(:)
+
+    !> Spin index of the eigenvector
+    integer, intent(out) :: iS
+
+    !> Index of the eigenvector
+    integer, intent(out) :: iEigvec
+
+    !> Orbital information
+    type(TOrbitals), intent(in) :: orb
+
+    !> Species for each atom
+    integer, intent(in) :: species(:)
+
+    !> Number of atoms
+    integer, intent(in) :: nAtom
+
+    character(sc), allocatable :: shellNamesTmp(:)
+    character(lc) :: tmpStr, strTmp
+    integer :: ind, ang
+    integer :: iAt, iSp, iSh, iOrb, iTmp
+
+    read(fd,*) tmpStr, iEigvec, strTmp
+
+    if (trim(strTmp) == "(up)") then
+       iS = 1
+    else
+       iS = 2
+    end if 
+
+    ind = 0
+    do iAt = 1, nAtom
+      iSp = species(iAt)
+      do iSh = 1, orb%nShell(iSp)
+        ang = orb%angShell(iSh, iSp)
+        if (iSh == 1) then
+          ind = ind + 1
+          read(fd,*), iTmp, tmpStr, strTmp, eigvec(ind)
+        else
+          do iOrb = 1, 2 * ang + 1
+            ind = ind + 1
+            read(fd,*), tmpStr, eigvec(ind)
+          end do
+        end if 
+      end do
+    end do
+    read(fd,*)
+
+  end subroutine readRealEigvecTxt
 end module dftbp_mainio

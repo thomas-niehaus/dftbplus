@@ -29,6 +29,8 @@ module dftbp_linrespgrad
   use dftbp_transcharges
   use dftbp_linresptypes
   use dftbp_degeneracyfind
+  use dftbp_fileid
+  use dftbp_mainio, only : readRealEigvecTxt
   implicit none
   private
 
@@ -196,6 +198,15 @@ contains
     !> transition charges, either cached or evaluated on demand
     type(TTransCharges) :: transChrg
 
+    logical :: tModelCT
+
+    !! Ugly hack, should be done over parser  
+    inquire(file="modelCT.cmd", exist=tModelCT)
+    if (tModelCT) then
+      call modelCTHamiltonian(tSpin, coord0, SSqr, species0, orb, sccCalc, iNeighbour, iAtomStart,&
+        & img2CentCell, grndEigVecs, grndEigVal, filling)
+      return
+    endif
 
     if (withArpack) then
 
@@ -2478,4 +2489,217 @@ contains
     enddo
 
   end subroutine chargeTest
+  subroutine modelCTHamiltonian(tSpin, coord0, SSqr, species0, orb, sccCalc, iNeighbour,&
+    & iAtomStart, img2CentCell, grndEigVecs, grndEigVal, filling)
+
+    !> spin polarized calculation
+    logical, intent(in) :: tSpin
+
+    !> atomic positions
+    real(dp), intent(in) :: coord0(:,:)
+
+    !> square overlap matrix between basis functions, both triangles required
+    real(dp), intent(in) :: SSqr(:,:)
+
+    !> chemical species of each atom
+    integer, intent(in) :: species0(:)
+
+    !> data type for atomic orbital information
+    type(TOrbitals), intent(in) :: orb
+
+    !> Self-consistent charge module settings
+    type(TScc), intent(in) :: sccCalc
+
+    !> Atomic neighbour lists
+    integer, intent(in) :: iNeighbour(0:,:)
+
+    !> index vector for S and H matrices
+    integer, intent(in) :: iAtomStart(:)
+
+    !> Mapping of atom number to central cell atom number
+    integer, intent(in) :: img2CentCell(:)
+
+    !> ground state MO-coefficients
+    real(dp), intent(in) :: grndEigVecs(:,:,:)
+
+    !> ground state MO-energies
+    real(dp), intent(in) :: grndEigVal(:,:)
+
+    !> occupations for the states
+    real(dp), intent(in) :: filling(:,:)
+
+    logical :: file_exists
+    logical, parameter :: updwn = .true.
+    integer, parameter :: iSpin = 1
+    integer :: nDimDimer, nDimMono, nAtomDimer, nAtomMono, iEigvec, iS
+    integer :: fdEigVec, iHomoA, iHomoB, iLumoA, iLumoB, iVec, nSpecies, iSp
+    integer :: iOrb, jOrb, mm, nn, ii
+    real(dp), allocatable :: eigvec(:), jointEigenVec(:,:,:), locGamma(:,:)
+    real(dp), allocatable :: eriHubbard(:), sTimesC(:,:,:), qTrans(:,:,:)
+    real(dp), allocatable :: hamDimer(:,:), work(:,:), otmp(:)
+    real(dp) :: eHomoA, eHomoB, eLumoA, eLumoB, eHomoAB, eLumoAB
+    real(dp) :: qHaHaIaIa, qHaIaIaHa, qHaHaIbIb, qHaIbIbHa, qHaHbIaIb, qHaIaIbHb
+    real(dp) :: qIaIbHaHb, qHaIbIaHb, qHaHbIaIa, qHaIaIaHb, qIaIbHaHa, qHaIaIbHa
+    real(dp) :: eFE, eCT, vEC, w, dH, dE, eFudge 
+
+    nDimDimer = size(SSqr, dim=1)
+    nDimMono =  nDimDimer/2
+    nAtomDimer = size(coord0, dim=2)
+    nAtomMono = nAtomDimer/2
+    nSpecies = maxval(species0)
+    allocate(eigvec(nDimMono))
+    allocate(jointEigenVec(nDimDimer,4,iSpin))
+    jointEigenVec(:,:,:) = 0.0_dp
+    allocate(sTimesC(nDimDimer,4,iSpin))
+    allocate(work(nDimDimer,4))
+    allocate(locGamma(nAtomDimer,nAtomDimer))
+    allocate(eriHubbard(nSpecies))
+    allocate(qTrans(nAtomDimer,4,4))
+    allocate(hamDimer(nDimDimer,nDimDimer))
+    allocate(otmp(nAtomDimer))
+
+    if (tSpin) then
+       call error('modelCTHamiltonian not set up for spin-polarized calculations.')
+    endif
+
+    fdEigVec = getFileId()
+    open(fdEigVec, file="modelCT.cmd", action='read')
+    read(fdEigVec,*) iHomoA, iLumoA, iHomoB, iLumoB
+    read(fdEigVec,*) eFudge
+    read(fdEigVec,*) (eriHubbard(iSp), iSp = 1, nSpecies)
+    close(fdEigVec)
+
+    inquire(file="A.eigenvec.out", exist=file_exists)
+    if (.not. file_exists) then
+       call error('File A.eigenvec.dat not found.')
+    endif
+    fdEigVec = getFileId()
+    open(fdEigVec, file="A.eigenvec.out", action='read')
+    read(fdEigVec, *)
+    read(fdEigVec, *)
+    do iVec = 1, iLumoA
+      call readRealEigvecTxt(fdEigVec, eigvec, iS, iEigvec, orb, species0, nAtomMono)
+      if (iEigVec == iHomoA) then
+         jointEigenVec(1:nDimMono,1,iSpin) = eigvec
+      else if (iEigVec == iLumoA) then
+         jointEigenVec(1:nDimMono,2,iSpin) = eigvec
+      end if
+    end do
+    close(fdEigVec)
+
+    inquire(file="B.eigenvec.out", exist=file_exists)
+    if (.not. file_exists) then
+       call error('File B.eigenvec.dat not found.')
+    endif
+    fdEigVec = getFileId()
+    open(fdEigVec, file="B.eigenvec.out", action='read')
+    read(fdEigVec, *)
+    read(fdEigVec, *)
+    do iVec = 1, iLumoB
+      call readRealEigvecTxt(fdEigVec, eigvec, iS, iEigvec, orb, species0, nAtomMono)
+      if (iEigVec == iHomoB) then
+         jointEigenVec(nDimMono+1:,3,iSpin) = eigvec
+      else if (iEigVec == iLumoB) then
+         jointEigenVec(nDimMono+1:,4,iSpin) = eigvec
+      end if
+    end do
+    close(fdEigVec)
+    print *,'finished reading'
+
+    call sccCalc%getAtomicGammaMatU(locGamma, eriHubbard, species0, iNeighbour, img2CentCell)
+    call symm(sTimesC(:,:,iSpin), "L", SSqr, jointEigenVec(:,:,iSpin))
+    do iOrb = 1, 4
+      do jOrb = iOrb, 4
+         qTrans(:,iOrb,jOrb) = transq(iOrb, jOrb, iAtomStart, updwn, sTimesC, jointEigenVec)
+      enddo
+    end do
+    print *,'finished transcharges'
+
+    do mm = 1, nDimDimer 
+      do nn = mm, nDimDimer
+        hamDimer(mm,nn) = 0.0_dp
+        do ii = 1, nDimDimer
+          hamDimer(mm,nn) = hamDimer(mm,nn) + grndEigVecs(mm,ii,iSpin) * &
+              &  grndEigVal(ii,iSpin) * grndEigVecs(nn,ii,iSpin) 
+        end do
+        hamDimer(nn,mm) = hamDimer(mm,nn) 
+      end do
+    end do
+    print *,'finished ham'
+
+    call symm(work, "L", hamDimer, sTimesC(:,:,iSpin))
+    eHomoA = dot_product(sTimesC(:,1,iSpin),work(:,1))
+    eLumoA = dot_product(sTimesC(:,2,iSpin),work(:,2))
+    eHomoAB = dot_product(sTimesC(:,3,iSpin),work(:,1))
+    eLumoAB = dot_product(sTimesC(:,4,iSpin),work(:,2))
+
+    print *,'finished onsite'
+
+    call hemv(otmp, locGamma, qTrans(:,2,2))
+    qHaHaIaIa = dot_product(qTrans(:,1,1), otmp)
+
+    print *,'finished first of many'
+
+    call hemv(otmp, locGamma, qTrans(:,1,2))
+    qHaIaIaHa = dot_product(qTrans(:,1,2), otmp)
+
+    call hemv(otmp, locGamma, qTrans(:,4,4))
+    qHaHaIbIb = dot_product(qTrans(:,1,1), otmp)    
+
+    call hemv(otmp, locGamma, qTrans(:,1,4))
+    qHaIbIbHa  = dot_product(qTrans(:,1,4), otmp)
+
+    call hemv(otmp, locGamma, qTrans(:,2,4))
+    qHaHbIaIb  = dot_product(qTrans(:,1,3), otmp)
+
+    call hemv(otmp, locGamma, qTrans(:,3,4))
+    qHaIaIbHb  = dot_product(qTrans(:,1,2), otmp)
+
+    call hemv(otmp, locGamma, qTrans(:,1,3))
+    qIaIbHaHb  = dot_product(qTrans(:,2,4), otmp)
+
+    call hemv(otmp, locGamma, qTrans(:,2,3))
+    qHaIbIaHb  = dot_product(qTrans(:,1,4), otmp)
+
+    call hemv(otmp, locGamma, qTrans(:,2,2))
+    qHaHbIaIa  = dot_product(qTrans(:,1,3), otmp)
+
+    call hemv(otmp, locGamma, qTrans(:,2,3))
+    qHaIaIaHb  = dot_product(qTrans(:,1,2), otmp)
+
+    call hemv(otmp, locGamma, qTrans(:,1,1))
+    qIaIbHaHa  = dot_product(qTrans(:,2,4), otmp)
+
+    call hemv(otmp, locGamma, qTrans(:,1,4))
+    qHaIaIbHa  = dot_product(qTrans(:,1,2), otmp)
+
+    print *,'finished all of them'
+
+    eFE = eFudge + eLumoA - eHomoA - qHaHaIaIa + 2.0_dp * qHaIaIaHa
+    eCT = eFudge + eLumoA - eHomoA - qHaHaIbIb + 2.0_dp * qHaIbIbHa
+    vEC = - qHaHbIaIb + 2.0_dp * qHaIaIbHb
+    w   = - qIaIbHaHb + 2.0_dp * qHaIbIaHb
+    dH  = - eHomoAB - qHaHbIaIa + 2.0_dp * qHaIaIaHb
+    dE  = + eLumoAB - qIaIbHaHa + 2.0_dp * qHaIaIbHa
+    print *,'the calc'
+    
+    write (11,'(14(2x,f10.6))') (eFudge + eLumoA - eHomoA) * Hartree__eV, qHaHaIaIa * Hartree__eV, &
+         & eCT * Hartree__eV, eFE * Hartree__eV, qHaHaIbIb * Hartree__eV, qHaIaIaHa * Hartree__eV, &
+         & qHaIbIbHa * Hartree__eV, vEC * Hartree__eV, dE * Hartree__eV, qHaIaIbHb * Hartree__eV, &
+         & eLumoAB * Hartree__eV, eHomoAB * Hartree__eV, w * Hartree__eV, dH * Hartree__eV
+    print *,'the write'
+
+    eFEp = eFE + vEC
+    eFEm = eFE - vEC
+    eCTp = eCT + w
+    eCTm = eCT - w
+    dp   = dE + dH
+    dm   = dE - dH
+
+    write (11,'(6(2x,f10.6))') eFEp * Hartree__eV, eFEm * Hartree__eV, eCTp * Hartree__eV, &
+         & eCTm * Hartree__eV, dp * Hartree__eV, dm * Hartree__eV
+
+    
+
+  end subroutine modelCTHamiltonian
 end module dftbp_linrespgrad
