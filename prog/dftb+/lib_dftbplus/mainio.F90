@@ -4705,7 +4705,7 @@ contains
         end if
         do iOrb = 1, 2 * ang + 1
           ind = ind + 1
-          write(fd, "(A,T22,1X,F10.6,1X,F10.6)") trim(tmpStr)//trim(orbitalNames(iOrb-ang-1,ang)),&
+          write(fd, "(A,T22,1X,F14.10,1X,F10.6)") trim(tmpStr)//trim(orbitalNames(iOrb-ang-1,ang)),&
               & eigvec(ind), fracs(ind)
         end do
       end do
