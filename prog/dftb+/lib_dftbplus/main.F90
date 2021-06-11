@@ -1147,9 +1147,9 @@ contains
     !! Ugly hack, should be done over parser
     inquire(file="modelCT.cmd", exist=tModelCT)
     if (tModelCT) then
-       call modelCTHamiltonian(this%tSpin, this%coord, this%SSqrReal, this%species, this%orb, &
-         & this%scc, this%neighbourList%iNeighbour, this%denseDesc%iAtomStart, this%img2CentCell, &
-         & this%eigvecsReal, this%eigen(:,1,:), this%filling(:,1,:))
+       call modelCTHamiltonian(this%tSpin, this%coord, this%over, this%species, this%orb, &
+         & this%scc, this%neighbourList%iNeighbour, this%nNeighbourSK, this%denseDesc%iAtomStart,&
+         & this%img2CentCell, this%iSparseStart, this%eigvecsReal, this%eigen(:,1,:))
     end if 
 
     if (this%isLinResp) then

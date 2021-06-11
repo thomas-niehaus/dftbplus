@@ -31,6 +31,7 @@ module dftbp_linrespgrad
   use dftbp_degeneracyfind
   use dftbp_fileid
   use dftbp_mainio, only : readRealEigvecTxt
+  use dftbp_sparse2dense, only: unpackHS, blockSymmetrizeHS
   implicit none
   private
 
@@ -2479,8 +2480,10 @@ contains
     enddo
 
   end subroutine chargeTest
-  subroutine modelCTHamiltonian(tSpin, coord0, SSqr, species0, orb, sccCalc, iNeighbour,&
-    & iAtomStart, img2CentCell, grndEigVecs, grndEigVal, filling)
+
+  !! Implements the model Hamiltonian given in JCC 39 1979 (2018)
+  subroutine modelCTHamiltonian(tSpin, coord0, over, species0, orb, sccCalc, iNeighbour,&
+    & nNeighbourSK, iAtomStart, img2CentCell, iSparseStart, grndEigVecs, grndEigVal)
 
     !> spin polarized calculation
     logical, intent(in) :: tSpin
@@ -2488,8 +2491,8 @@ contains
     !> atomic positions
     real(dp), intent(in) :: coord0(:,:)
 
-    !> square overlap matrix between basis functions, both triangles required
-    real(dp), intent(in) :: SSqr(:,:)
+    !> sparse overlap matrix
+    real(dp), intent(in) :: over(:)
 
     !> chemical species of each atom
     integer, intent(in) :: species0(:)
@@ -2503,20 +2506,23 @@ contains
     !> Atomic neighbour lists
     integer, intent(in) :: iNeighbour(0:,:)
 
+    !> Number of neighbours for each of the atoms
+    integer, intent(in) :: nNeighbourSK(:)
+
     !> index vector for S and H matrices
     integer, intent(in) :: iAtomStart(:)
 
     !> Mapping of atom number to central cell atom number
     integer, intent(in) :: img2CentCell(:)
 
+    !> Index array for the start of atomic blocks in sparse arrays
+    integer, intent(in) :: iSparseStart(:,:)
+
     !> ground state MO-coefficients
     real(dp), intent(in) :: grndEigVecs(:,:,:)
 
     !> ground state MO-energies
     real(dp), intent(in) :: grndEigVal(:,:)
-
-    !> occupations for the states
-    real(dp), intent(in) :: filling(:,:)
 
     logical :: file_exists
     logical, parameter :: updwn = .true.
@@ -2527,7 +2533,7 @@ contains
     integer :: lWork = 10
     real(dp), allocatable :: eigvec(:), jointEigenVec(:,:,:), locGamma(:,:)
     real(dp), allocatable :: eriHubbard(:), sTimesC(:,:,:), qTrans(:,:,:)
-    real(dp), allocatable :: hamDimer(:,:), work(:,:), otmp(:)
+    real(dp), allocatable :: hamDimer(:,:), work(:,:), otmp(:), SSqr(:,:)
     real(dp) :: matCT(2,2), eigValCT(2), workEigen(10) 
     real(dp) :: eHomoA, eHomoB, eLumoA, eLumoB, eHomoAB, eLumoAB
     real(dp) :: qHaHaIaIa, qHaIaIaHa, qHaHaIbIb, qHaIbIbHa, qHaHbIaIb, qHaIaIbHb
@@ -2538,10 +2544,6 @@ contains
     character(lc), parameter :: eigVecBFile = 'B.eigenvec.out'
     character(lc), parameter :: outFile = 'modelCT.out'
 
-
-    print *,'Eigenval',(grndEigVal(ii,1)*Hartree__eV, ii = 1,size(SSqr, dim=1))
-    print *,'Eigenvec',(grndEigVecs(ii,140,1), ii = 1,size(SSqr, dim=1)) 
-
     write(*,*)
     write(*,*) '-> ModelCTHamiltonian'
 
@@ -2550,13 +2552,14 @@ contains
       call error('Number of atoms not even, this is not a dimer calculation.')
     end if
     nAtomMono = nAtomDimer/2
-    nDimDimer = size(SSqr, dim=1)
+    nDimDimer = size(grndEigVal, dim=1)
     nDimMono =  nDimDimer/2
     nSpecies = maxval(species0)
     allocate(eigvec(nDimMono))
     allocate(jointEigenVec(nDimDimer,4,iSpin))
     jointEigenVec(:,:,:) = 0.0_dp
     allocate(sTimesC(nDimDimer,4,iSpin))
+    allocate(SSqr(nDimDimer,nDimDimer))
     allocate(work(nDimDimer,4))
     allocate(locGamma(nAtomDimer,nAtomDimer))
     allocate(eriHubbard(nSpecies))
@@ -2623,41 +2626,43 @@ contains
     close(fd)
     write(*,*) '-> ... done.'
     
-    print *
-    print *,'the overlap',  SSqr
-     print *
-    print *,'the gamma', locGamma   
+    !! create dense overlap from sparse format
+    call unpackHS(SSqr, over, iNeighbour, nNeighbourSK, iAtomStart, iSparseStart, img2CentCell)
+    call blockSymmetrizeHS(SSqr, iAtomStart)
 
+    !! rebuild Hamiltonian from eigenvectors (difficult to have it passed)  
+    do mm = 1, nDimDimer 
+      do nn = mm, nDimDimer
+        hamDimer(mm,nn) = 0.0_dp
+        do ii = 1, nDimDimer
+          hamDimer(mm,nn) = hamDimer(mm,nn) + grndEigVecs(mm,ii,iSpin) * &
+              &  grndEigVal(ii,iSpin) * grndEigVecs(nn,ii,iSpin) 
+        end do
+        hamDimer(nn,mm) = hamDimer(mm,nn) 
+      end do
+    end do
+
+    !! atom resolved Gamma with custom Hubbards
     call sccCalc%getAtomicGammaMatU(locGamma, eriHubbard, species0, iNeighbour, img2CentCell)
+
+    !! transition charges 
+    !! 1 = HOMO A, 2 = LUMO A, 3 = HOMO B, 4 = LUMO B
     call symm(sTimesC(:,:,iSpin), "L", SSqr, jointEigenVec(:,:,iSpin))
     do iOrb = 1, 4
       do jOrb = iOrb, 4
          qTrans(:,iOrb,jOrb) = transq(iOrb, jOrb, iAtomStart, updwn, sTimesC, jointEigenVec)
       enddo
     end do
-    do iOrb = 1, 4
-       print *,'the sum',sum(qTrans(:,iOrb,iOrb))
-    enddo
 
-    do mm = 1, nDimDimer 
-      do nn = mm, nDimDimer
-        hamDimer(mm,nn) = 0.0_dp
-        do ii = 1, nDimDimer
-          !!hamDimer(mm,nn) = hamDimer(mm,nn) + grndEigVecs(mm,ii,iSpin) * &
-            !!  &  grndEigVal(ii,iSpin) * grndEigVecs(nn,ii,iSpin) 
-          hamDimer(mm,nn) = hamDimer(mm,nn) + grndEigVecs(mm,ii,iSpin) * &
-              &  1.0_dp * grndEigVecs(nn,ii,iSpin) 
-        end do
-        hamDimer(nn,mm) = hamDimer(mm,nn) 
-      end do
-    end do
-
+    !! note that H = S sum_i C_i eps_i C_i S, 
+    !! leave out S, that is coming from sTimesC
     call symm(work, "L", hamDimer, sTimesC(:,:,iSpin))
     eHomoA = dot_product(sTimesC(:,1,iSpin),work(:,1))
     eLumoA = dot_product(sTimesC(:,2,iSpin),work(:,2))
     eHomoAB = dot_product(sTimesC(:,3,iSpin),work(:,1))
     eLumoAB = dot_product(sTimesC(:,4,iSpin),work(:,2))
 
+    !! two-electron integrals 
     call hemv(otmp, locGamma, qTrans(:,2,2))
     qHaHaIaIa = dot_product(qTrans(:,1,1), otmp)
 
@@ -2694,7 +2699,7 @@ contains
     call hemv(otmp, locGamma, qTrans(:,1,4))
     qHaIaIbHa  = dot_product(qTrans(:,1,2), otmp)
 
-    print *,eFudge*Hartree__eV,eLumoA, eHomoA
+    !! model Hamiltonian matrix elements 
     eFE = eFudge + eLumoA - eHomoA - qHaHaIaIa + 2.0_dp * qHaIaIaHa
     eCT = eFudge + eLumoA - eHomoA - qHaHaIbIb + 2.0_dp * qHaIbIbHa
     vEC = - qHaHbIaIb + 2.0_dp * qHaIaIbHb
@@ -2702,6 +2707,7 @@ contains
     dH  = - eHomoAB - qHaHbIaIa + 2.0_dp * qHaIaIaHb
     dE  = + eLumoAB - qIaIbHaHa + 2.0_dp * qHaIaIbHa
     
+    !! parameters of the 2x2 Hamiltonian
     eFEp = eFE + vEC
     eFEm = eFE - vEC
     eCTp = eCT + w
@@ -2728,6 +2734,7 @@ contains
     matCT(2,1) = doP
     matCT(2,2) = eCTp
 
+    !! solution of 2x2 eigenvalue problem, note that eigenstates are ordered by energy 
     call dsyev('V', 'U', 2, matCT, 2, eigValCT, workEigen, lWork, info)
     if (info /= 0) then
        call error('modelCTHamiltonian: Diagonalizer crashed.')
