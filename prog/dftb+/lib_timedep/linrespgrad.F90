@@ -34,7 +34,7 @@ module dftbp_linrespgrad
   implicit none
   private
 
-  public :: LinRespGrad_old
+  public :: LinRespGrad_old, modelCTHamiltonian
 
   !> Output files for results
   character(*), parameter :: transitionsOut = "TRA.DAT"
@@ -199,14 +199,6 @@ contains
     type(TTransCharges) :: transChrg
 
     logical :: tModelCT
-
-    !! Ugly hack, should be done over parser  
-    inquire(file="modelCT.cmd", exist=tModelCT)
-    if (tModelCT) then
-      call modelCTHamiltonian(tSpin, coord0, SSqr, species0, orb, sccCalc, iNeighbour, iAtomStart,&
-        & img2CentCell, grndEigVecs, grndEigVal, filling)
-      return
-    endif
 
     if (withArpack) then
 
@@ -2540,7 +2532,8 @@ contains
     real(dp) :: eHomoA, eHomoB, eLumoA, eLumoB, eHomoAB, eLumoAB
     real(dp) :: qHaHaIaIa, qHaIaIaHa, qHaHaIbIb, qHaIbIbHa, qHaHbIaIb, qHaIaIbHb
     real(dp) :: qIaIbHaHb, qHaIbIaHb, qHaHbIaIa, qHaIaIaHb, qIaIbHaHa, qHaIaIbHa
-    real(dp) :: eFE, eCT, vEC, w, dH, dE, eFudge 
+    real(dp) :: eFE, eCT, vEC, w, dH, dE, eFudge, eFEp, eFEm, eCTp, eCTm, doP, doM
+  
 
     nDimDimer = size(SSqr, dim=1)
     nDimMono =  nDimDimer/2
@@ -2693,12 +2686,13 @@ contains
     eFEm = eFE - vEC
     eCTp = eCT + w
     eCTm = eCT - w
-    dp   = dE + dH
-    dm   = dE - dH
+    doP   = dE + dH
+    doM   = dE - dH
 
     write (11,'(6(2x,f10.6))') eFEp * Hartree__eV, eFEm * Hartree__eV, eCTp * Hartree__eV, &
-         & eCTm * Hartree__eV, dp * Hartree__eV, dm * Hartree__eV
-
+         & eCTm * Hartree__eV, doP * Hartree__eV, doM * Hartree__eV
+   
+!!    call dsyev(
     
 
   end subroutine modelCTHamiltonian

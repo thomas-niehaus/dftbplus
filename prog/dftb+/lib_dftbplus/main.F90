@@ -69,6 +69,7 @@ module dftbp_main
 #:if WITH_ARPACK
   use dftbp_RS_LinearResponse
 #:endif
+  use dftbp_linrespgrad
   use dftbp_mainio
   use dftbp_commontypes
   use dftbp_dispersions, only : TDispersionIface
@@ -610,6 +611,8 @@ contains
 
     real(dp), allocatable :: dipoleTmp(:)
 
+    logical :: tModelCT
+
     if (this%tDipole) then
       allocate(dipoleTmp(3))
     end if
@@ -1140,6 +1143,14 @@ contains
     end if
 
     call env%globalTimer%startTimer(globalTimers%postSCC)
+
+    !! Ugly hack, should be done over parser
+    inquire(file="modelCT.cmd", exist=tModelCT)
+    if (tModelCT) then
+       call modelCTHamiltonian(this%tSpin, this%coord, this%SSqrReal, this%species, this%orb, &
+         & this%scc, this%neighbourList%iNeighbour, this%denseDesc%iAtomStart, this%img2CentCell, &
+         & this%eigvecsReal, this%eigen(:,1,:), this%filling(:,1,:))
+    end if 
 
     if (this%isLinResp) then
       if (.not. this%isRS_LinResp) then
