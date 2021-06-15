@@ -1,0 +1,46 @@
+#### README modelCTHamiltionian -- (15/06/2021) thomas.niehaus@univ-lyon1.fr
+
+This version of dftb+ implements the 4x4 model Hamiltonian given in Liu et al. JCC 39 1979 (2018)
+for molecular dimers. It should work with any choice of ground state DFTB Hamiltonian (periodic 
+boundary conditions have not been checked).
+
+The option is invoked if a file named 'modelCT.cmd' is present in the working directory. The format 
+is 
+   nAtomFragA, nDimFragA, nAtomFragB, nDimFragB 
+   iHomoA, iLumoA, iHomoB, iLumoB
+   e0
+   eriHubbard(1) eriHubbard(2) ... eriHubbard(N)
+
+where nAtomFragA/nAtomFragB  is the number of atoms of the first/second fragment (integer),
+nDimFragA/nDimFragB is the number of molecular orbitals of the first/second fragment (integer),
+iHomoA and iLumoA (and similar for fragment B) are the indices (integer) of the molecular orbitals 
+taken into account for the 4x4 Hamiltonian. These are normally the HOMO and LUMO of both fragments. 
+Note that the two fragments can in principle be of different size. The parameter e0 (real) is defined
+in Liu et. al and can be used to alter the HOMO-LUMO gap. The parameters eriHubbard (real) are the 
+Hubbard parameters for each species (order as in the geometry for the complex). 
+
+The MOs of the fragments need to be present in the working directory and named 'A.cur.eigenvec.out'
+and 'B.cur.eigenvec.out'. Typically these are created by a previous run of dftb+ for the fragments with 
+the options "WriteEigenvectors = Yes" and "EigenvectorsAsText = Yes". 
+
+The code produces a file named 'modelCT.out' that contains the Hamiltonian parameters as defined 
+by Liu et al., as well as the parameters of the block diagonalized (2x2) Hamiltonian, together with 
+its eigen values and vectors. 
+
+A problem related to successive evaluations of the Hamiltonian along a trajectory of different complex
+geometries is that the sign of the MO coefficents is random. This leads to sign changes of the Hamiltonian
+parameters. To allow for consistent signs between runs, the MO coefficients of a previous run can be made
+available by the files 'A.pre.eigenvec.out' and 'B.pre.eigenvec.out'. The file 'sign.dat' must then
+also be present. It contains four integers in the first and only line (+1/-1) which indicate the current status
+of the sign for each of the four molecular orbitals. The code will overwrite this file, if sign changes
+between the ?.pre.eigenvec.out and ?.cur.eigenvec.out have been detected. 
+
+The whole procedure is illustrated in the subdirectory 'trajectory', which has a shell script to evaluate 
+the trajectory plot given in Liu et al. 
+
+The dftb+ subroutine 'modelCTHamiltonian' that performs the computation is given in 
+'prog/dftb+/lib_timedep/linrespgrad.F90'.
+
+Have fun!  
+
+

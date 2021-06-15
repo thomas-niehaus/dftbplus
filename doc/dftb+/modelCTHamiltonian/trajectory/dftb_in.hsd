@@ -1,0 +1,34 @@
+Geometry = GenFormat {
+    <<< "geo.gen"
+}
+
+Driver = {}
+
+Hamiltonian = DFTB {
+    SCC = Yes
+    SCCTolerance = 1e-8
+    MaxAngularMomentum = {
+        C = "p"
+        N = "p"
+        O = "p"
+        H = "s"
+    }
+    SlaterKosterFiles = Type2FileNames {
+        Prefix = "/home/niehaus/Slater-Koster/ob2-1-1/base/"
+        Separator = "-"
+        Suffix = ".skf"
+    }
+    Filling = Fermi {Temperature [K] = 0}
+    RangeSeparated = LC {
+      Screening = MatrixBased {}
+    }
+}
+
+Analysis {
+    WriteEigenvectors = Yes	
+    EigenvectorsAsText = Yes
+}
+
+ParserOptions {
+    ParserVersion = 5
+}

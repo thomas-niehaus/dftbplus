@@ -2481,12 +2481,24 @@ contains
 
   end subroutine chargeTest
 
-  !! Implements the model Hamiltonian given in JCC 39 1979 (2018)
-  subroutine modelCTHamiltonian(tSpin, coord0, over, species0, orb, sccCalc, iNeighbour,&
+  !! Implements the 4x4 model Hamiltonian given in Liu et al. JCC 39 1979 (2018)
+  !! for molecular dimers. Reads he participating frontier orbitals of the two fragments from files,
+  !! constructs overlap and Hamiltonian for the dimer. A Gamma matrix with 
+  !! user defined Hubbard values is constructed. Various 2e-integrals are computed using
+  !! the gamma approximation in DFTB (Niehaus et al., PRB 63 085108 (2001) and PRA 71 022508 (2008)) 
+  !!
+  !! Note that diagonalizers provide eigenvectors with random phases. To account for the sign 
+  !! problem in the 2e-integrals, the phase is kept constant inbetween two separate calculations by 
+  !! reading the orbitals from the current and previous calculations. A data file (sign.dat) is used 
+  !! for book keeping
+  subroutine modelCTHamiltonian(tSpin, nAtomComplex, coord0, over, species0, orb, sccCalc, iNeighbour,&
     & nNeighbourSK, iAtomStart, img2CentCell, iSparseStart, grndEigVecs, grndEigVal)
 
     !> spin polarized calculation
     logical, intent(in) :: tSpin
+
+    !> number of atoms for complex
+    integer, intent(in) :: nAtomComplex
 
     !> atomic positions
     real(dp), intent(in) :: coord0(:,:)
@@ -2524,14 +2536,16 @@ contains
     !> ground state MO-energies
     real(dp), intent(in) :: grndEigVal(:,:)
 
-    logical :: file_exists
+    logical :: file_exists, lPhaseMatch 
     logical, parameter :: updwn = .true.
     integer, parameter :: iSpin = 1
-    integer :: nDimDimer, nDimMono, nAtomDimer, nAtomMono, iEigvec, iS
+    integer :: nAtomFragA, nAtomFragB, nDimFragA, nDimFragB
+    integer :: nDimComplex, iEigvec, iS
     integer :: fd, iHomoA, iHomoB, iLumoA, iLumoB, iVec, nSpecies, iSp
-    integer :: iOrb, jOrb, mm, nn, ii, jj, info
+    integer :: iOrb, jOrb, mm, nn, ii, jj, info, iPreSign(4)
     integer :: lWork = 10
     real(dp), allocatable :: eigvec(:), jointEigenVec(:,:,:), locGamma(:,:)
+    real(dp), allocatable :: preEigenVec(:,:,:)
     real(dp), allocatable :: eriHubbard(:), sTimesC(:,:,:), qTrans(:,:,:)
     real(dp), allocatable :: hamDimer(:,:), work(:,:), otmp(:), SSqr(:,:)
     real(dp) :: matCT(2,2), eigValCT(2), workEigen(10) 
@@ -2539,102 +2553,200 @@ contains
     real(dp) :: qHaHaIaIa, qHaIaIaHa, qHaHaIbIb, qHaIbIbHa, qHaHbIaIb, qHaIaIbHb
     real(dp) :: qIaIbHaHb, qHaIbIaHb, qHaHbIaIa, qHaIaIaHb, qIaIbHaHa, qHaIaIbHa
     real(dp) :: eFE, eCT, vEC, w, dH, dE, eFudge, eFEp, eFEm, eCTp, eCTm, doP, doM
+    real(dp) :: rOverlap
     character(lc), parameter :: cmdFile = 'modelCT.cmd'
-    character(lc), parameter :: eigVecAFile = 'A.eigenvec.out'
-    character(lc), parameter :: eigVecBFile = 'B.eigenvec.out'
+    character(lc), parameter :: eigVecACurFile = 'A.cur.eigenvec.out'
+    character(lc), parameter :: eigVecAPreFile = 'A.pre.eigenvec.out'
+    character(lc), parameter :: eigVecBCurFile = 'B.cur.eigenvec.out'
+    character(lc), parameter :: eigVecBPreFile = 'B.pre.eigenvec.out'
     character(lc), parameter :: outFile = 'modelCT.out'
+    character(lc), parameter :: signFile = 'sign.dat'
 
     write(*,*)
     write(*,*) '-> ModelCTHamiltonian'
 
-    nAtomDimer = size(coord0, dim=2)
-    if (modulo(nAtomDimer, 2) /= 0) then
-      call error('Number of atoms not even, this is not a dimer calculation.')
-    end if
-    nAtomMono = nAtomDimer/2
-    nDimDimer = size(grndEigVal, dim=1)
-    nDimMono =  nDimDimer/2
+    nDimComplex = size(grndEigVal, dim=1)
     nSpecies = maxval(species0)
-    allocate(eigvec(nDimMono))
-    allocate(jointEigenVec(nDimDimer,4,iSpin))
-    jointEigenVec(:,:,:) = 0.0_dp
-    allocate(sTimesC(nDimDimer,4,iSpin))
-    allocate(SSqr(nDimDimer,nDimDimer))
-    allocate(work(nDimDimer,4))
-    allocate(locGamma(nAtomDimer,nAtomDimer))
-    allocate(eriHubbard(nSpecies))
-    allocate(qTrans(nAtomDimer,4,4))
-    allocate(hamDimer(nDimDimer,nDimDimer))
-    allocate(otmp(nAtomDimer))
 
     if (tSpin) then
        call error('modelCTHamiltonian not set up for spin-polarized calculations.')
     endif
 
-    write(*,*) '-> Try to read '//trim(cmdFile)
+    !! Reads command file, eFudge is the term E_0 in Liu et al.
+    allocate(eriHubbard(nSpecies))
+    write(*,'(1x,A)', advance = 'NO') '-> Try to read '//trim(cmdFile)
     fd = getFileId()
     open(fd, file=cmdFile, action='read')
+    read(fd,*) nAtomFragA, nDimFragA, nAtomFragB, nDimFragB
     read(fd,*) iHomoA, iLumoA, iHomoB, iLumoB
     read(fd,*) eFudge
     read(fd,*) (eriHubbard(iSp), iSp = 1, nSpecies)
     close(fd)
-    write(*,*) '-> ... done.'
+    write(*,*) '... done.'
 
-    write(*,*) '-> Try to read '//trim(eigVecAFile)
-    inquire(file=eigVecAFile, exist=file_exists)
+    if (nAtomComplex /= nAtomFragA + nAtomFragB) then
+      call error('modelCTHamiltonian: Fragment sizes not consistent.')  
+    endif
+    if (nDimComplex /= nDimFragA + nDimFragB) then
+      call error('modelCTHamiltonian: Fragment dimensions not consistent.')  
+    endif
+
+    allocate(eigvec(max(nDimFragA, nDimFragB)))
+    allocate(jointEigenVec(nDimComplex,4,iSpin))
+    jointEigenVec(:,:,:) = 0.0_dp
+    allocate(sTimesC(nDimComplex,4,iSpin))
+    allocate(SSqr(nDimComplex,nDimComplex))
+    allocate(work(nDimComplex,4))
+    allocate(locGamma(nAtomComplex,nAtomComplex))
+    allocate(qTrans(nAtomComplex,4,4))
+    allocate(hamDimer(nDimComplex,nDimComplex))
+    allocate(otmp(nAtomComplex))
+    iPreSign(:) = 1
+
+    !! Read current MO files for the fragments 
+    write(*,'(1x,A)', advance = 'NO') '-> Try to read '//trim(eigVecACurFile)
+    inquire(file=eigVecACurFile, exist=file_exists)
     if (.not. file_exists) then
-       call error('File '//trim(eigVecAFile)//' not found.')
+       call error('File '//trim(eigVecACurFile)//' not found.')
     endif
     fd = getFileId()
-    open(fd, file=eigVecAFile, action='read')
+    open(fd, file=eigVecACurFile, action='read')
     read(fd, *)
     read(fd, *)
     do iVec = 1, iLumoA
-      call readRealEigvecTxt(fd, eigvec, iS, iEigvec, orb, species0, nAtomMono)
+      call readRealEigvecTxt(fd, eigvec(1:nDimFragA), iS, iEigvec, orb, species0, nAtomFragA)
       if (iS == 2) then
          call error('Is eigenvec file from a spin-polarized calculation?')
       end if
       if (iEigVec == iHomoA) then
-         jointEigenVec(1:nDimMono,1,iSpin) = eigvec
+         jointEigenVec(1:nDimFragA,1,iSpin) = eigvec
       else if (iEigVec == iLumoA) then
-         jointEigenVec(1:nDimMono,2,iSpin) = eigvec
+         jointEigenVec(1:nDimFragA,2,iSpin) = eigvec
       end if
     end do
     close(fd)
-    write(*,*) '-> ... done.'
+    write(*,*) '... done.'
 
-    write(*,*) '-> Try to read '//trim(eigVecBFile)
-    inquire(file=eigVecBFile, exist=file_exists)
+    !! If a MO file from a previous run is found, an attempt to match phases
+    !! between the two runs is attempted
+    write(*,'(1x,A)') '-> Try to read '//trim(eigVecAPreFile)
+    inquire(file=eigVecAPreFile, exist=file_exists)
+    if (file_exists) then
+      write(*,*) '-> File found. Attempt phase match.'
+      allocate(preEigenVec(nDimComplex,4,iSpin))
+      preEigenVec(:,:,:) = 0.0_dp
+      lPhaseMatch = .true.
+      fd = getFileId()
+      open(fd, file=eigVecAPreFile, action='read')
+      read(fd, *)
+      read(fd, *)
+      do iVec = 1, iLumoA
+        call readRealEigvecTxt(fd, eigvec(1:nDimFragA), iS, iEigvec, orb, species0, nAtomFragA)
+        if (iS == 2) then
+          call error('Is eigenvec file from a spin-polarized calculation?')
+        end if
+        if (iEigVec == iHomoA) then
+          preEigenVec(1:nDimFragA,1,iSpin) = eigvec
+        else if (iEigVec == iLumoA) then
+          preEigenVec(1:nDimFragA,2,iSpin) = eigvec
+        end if
+      end do
+      close(fd)
+    else
+       write(*,*) '-> File not found. Ok. No phase match will be performed.'
+       lPhaseMatch = .false.
+    endif
+
+    write(*,'(1x,A)', advance='NO') '-> Try to read '//trim(eigVecBCurFile)
+    inquire(file=eigVecBCurFile, exist=file_exists)
     if (.not. file_exists) then
-       call error('File '//trim(eigVecBFile)//' not found.')
+       call error('File '//trim(eigVecBCurFile)//' not found.')
     endif
     fd = getFileId()
-    open(fd, file=eigVecBFile, action='read')
+    open(fd, file=eigVecBCurFile, action='read')
     read(fd, *)
     read(fd, *)
     do iVec = 1, iLumoB
-      call readRealEigvecTxt(fd, eigvec, iS, iEigvec, orb, species0, nAtomMono)
+       print *,'in reading', iVec,nDimFragB,nAtomFragB
+      call readRealEigvecTxt(fd, eigvec(1:nDimFragB), iS, iEigvec, orb, species0, nAtomFragB)
       if (iS == 2) then
          call error('Is eigenvec file from a spin-polarized calculation?')
       end if
+      print *,'or is it here?'
       if (iEigVec == iHomoB) then
-         jointEigenVec(nDimMono+1:,3,iSpin) = eigvec
+         jointEigenVec(nDimFragA+1:,3,iSpin) = eigvec
       else if (iEigVec == iLumoB) then
-         jointEigenVec(nDimMono+1:,4,iSpin) = eigvec
+         jointEigenVec(nDimFragA+1:,4,iSpin) = eigvec
       end if
     end do
     close(fd)
-    write(*,*) '-> ... done.'
-    
-    !! create dense overlap from sparse format
+    write(*,*) '... done.'
+
+    if (lPhaseMatch) then
+      write(*,'(1x,A)', advance = 'NO') '-> Try to read '//trim(eigVecBPreFile)
+      inquire(file=eigVecBPreFile, exist=file_exists)
+      if (.not. file_exists) then
+        call error('File '//trim(eigVecBPreFile)//' not found.')
+      endif
+      fd = getFileId()
+      open(fd, file=eigVecBPreFile, action='read')
+      read(fd, *)
+      read(fd, *)
+      do iVec = 1, iLumoA
+         call readRealEigvecTxt(fd, eigvec(1:nDimFragB), iS, iEigvec, orb, species0, nAtomFragB)
+         if (iS == 2) then
+            call error('Is eigenvec file from a spin-polarized calculation?')
+         end if
+         if (iEigVec == iHomoA) then
+            preEigenVec(nDimFragA+1:,3,iSpin) = eigvec
+         else if (iEigVec == iLumoA) then
+            preEigenVec(nDimFragA+1:,4,iSpin) = eigvec
+         end if
+      end do
+      close(fd)
+      write(*,*) '... done.'
+
+      write(*,'(1x,A)', advance = 'NO') '-> Try to read '//trim(signFile)
+      inquire(file=signFile, exist=file_exists)
+      if (file_exists) then
+        fd = getFileId()
+        open(fd, file=signFile, action='read') 
+        read(fd, *) (iPreSign(iOrb), iOrb = 1,4)
+        close(fd)
+        write(*,*) '... done.'
+      else
+        call error('File '//trim(signFile)//' not found.') 
+      end if
+
+      !! Phase match, find angle between MO vectors and see if they are approximately parallel
+      do iOrb = 1, 4
+        rOverlap = dot_product(preEigenVec(:,iOrb,iSpin),jointEigenVec(:,iOrb, iSpin)) / &
+            & sqrt(dot_product(preEigenVec(:,iOrb,iSpin),preEigenVec(:,iOrb, iSpin))) / &
+            & sqrt(dot_product(jointEigenVec(:,iOrb,iSpin),jointEigenVec(:,iOrb, iSpin)))
+        if (rOverlap < 0.0_dp) then
+          iPreSign(iOrb) = - iPreSign(iOrb)
+        endif
+        jointEigenVec(:,iOrb, iSpin) = iPreSign(iOrb) * jointEigenVec(:,iOrb, iSpin)
+      end do
+    end if
+
+    !! Book keeping of MO phase
+    fd = getFileId()
+    open(fd, file=signFile, action='write')
+    write(fd, '(4(2x,i2))') (iPreSign(iOrb), iOrb = 1,4)
+    close(fd)
+
+    !! Create dense overlap matrix from sparse format
     call unpackHS(SSqr, over, iNeighbour, nNeighbourSK, iAtomStart, iSparseStart, img2CentCell)
     call blockSymmetrizeHS(SSqr, iAtomStart)
 
-    !! rebuild Hamiltonian from eigenvectors (difficult to have it passed)  
-    do mm = 1, nDimDimer 
-      do nn = mm, nDimDimer
+    !! Rebuild Hamiltonian from eigenvectors (difficult to have it passed) 
+    !! Note that actually H = S sum_i C_i eps_i C_i S, 
+    !! we leave out S, that is coming from sTimesC 
+    do mm = 1, nDimComplex 
+      do nn = mm, nDimComplex
         hamDimer(mm,nn) = 0.0_dp
-        do ii = 1, nDimDimer
+        do ii = 1, nDimComplex
           hamDimer(mm,nn) = hamDimer(mm,nn) + grndEigVecs(mm,ii,iSpin) * &
               &  grndEigVal(ii,iSpin) * grndEigVecs(nn,ii,iSpin) 
         end do
@@ -2642,10 +2754,10 @@ contains
       end do
     end do
 
-    !! atom resolved Gamma with custom Hubbards
+    !! Atom resolved Gamma with custom Hubbards
     call sccCalc%getAtomicGammaMatU(locGamma, eriHubbard, species0, iNeighbour, img2CentCell)
 
-    !! transition charges 
+    !! Transition charges 
     !! 1 = HOMO A, 2 = LUMO A, 3 = HOMO B, 4 = LUMO B
     call symm(sTimesC(:,:,iSpin), "L", SSqr, jointEigenVec(:,:,iSpin))
     do iOrb = 1, 4
@@ -2654,15 +2766,14 @@ contains
       enddo
     end do
 
-    !! note that H = S sum_i C_i eps_i C_i S, 
-    !! leave out S, that is coming from sTimesC
+    !! <K|H|L>, where K,L is HOMO/LUMO on A/B
     call symm(work, "L", hamDimer, sTimesC(:,:,iSpin))
     eHomoA = dot_product(sTimesC(:,1,iSpin),work(:,1))
     eLumoA = dot_product(sTimesC(:,2,iSpin),work(:,2))
     eHomoAB = dot_product(sTimesC(:,3,iSpin),work(:,1))
     eLumoAB = dot_product(sTimesC(:,4,iSpin),work(:,2))
 
-    !! two-electron integrals 
+    !! Two-electron integrals 
     call hemv(otmp, locGamma, qTrans(:,2,2))
     qHaHaIaIa = dot_product(qTrans(:,1,1), otmp)
 
@@ -2699,7 +2810,7 @@ contains
     call hemv(otmp, locGamma, qTrans(:,1,4))
     qHaIaIbHa  = dot_product(qTrans(:,1,2), otmp)
 
-    !! model Hamiltonian matrix elements 
+    !! Model Hamiltonian matrix elements (4x4)
     eFE = eFudge + eLumoA - eHomoA - qHaHaIaIa + 2.0_dp * qHaIaIaHa
     eCT = eFudge + eLumoA - eHomoA - qHaHaIbIb + 2.0_dp * qHaIbIbHa
     vEC = - qHaHbIaIb + 2.0_dp * qHaIaIbHb
@@ -2707,7 +2818,7 @@ contains
     dH  = - eHomoAB - qHaHbIaIa + 2.0_dp * qHaIaIaHb
     dE  = + eLumoAB - qIaIbHaHa + 2.0_dp * qHaIaIbHa
     
-    !! parameters of the 2x2 Hamiltonian
+    !! Parameters of the (2x2) Hamiltonian
     eFEp = eFE + vEC
     eFEm = eFE - vEC
     eCTp = eCT + w
@@ -2734,7 +2845,7 @@ contains
     matCT(2,1) = doP
     matCT(2,2) = eCTp
 
-    !! solution of 2x2 eigenvalue problem, note that eigenstates are ordered by energy 
+    !! Solution of 2x2 eigenvalue problem, note that eigenstates are ordered by energy 
     call dsyev('V', 'U', 2, matCT, 2, eigValCT, workEigen, lWork, info)
     if (info /= 0) then
        call error('modelCTHamiltonian: Diagonalizer crashed.')
