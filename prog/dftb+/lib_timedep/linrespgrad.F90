@@ -66,6 +66,8 @@ module dftbp_linrespgrad
       &    mnaupd, mnaup2, mnaitr, mneigh, mnapps, mngets, mneupd,&
       &    mcaupd, mcaup2, mcaitr, mceigh, mcapps, mcgets, mceupd
 
+  !> Variables for state following in excited state optimization
+  real(dp), allocatable :: orthoGrndEigVecsPre(:,:,:), oldEvec(:)
 contains
 
   !> This subroutine analytically calculates excitations and gradients of excited state energies
@@ -196,6 +198,8 @@ contains
     !> transition charges, either cached or evaluated on demand
     type(TTransCharges) :: transChrg
 
+    real(dp), allocatable :: orthoGrndEigVecs(:,:,:)
+    real(dp) :: det
 
     if (withArpack) then
 
@@ -603,6 +607,7 @@ contains
    #:endblock DEBUG_CODE 
 
       do iLev = nStartLev, nEndLev
+         print *,'Entering the force'
         omega = sqrt(eval(iLev))
         ! Furche terms: X+Y, X-Y
         xpy(:nxov_rd) = evec(:nxov_rd,iLev) * sqrt(wij(:nxov_rd) / omega)
@@ -638,6 +643,19 @@ contains
         end if
 
         if (tForces) then
+          call initStateFollowing(nstat, SSqr, grndEigVecs, evec, orthoGrndEigVecsPre, oldEvec)
+          !!write(*,'(A,4(2x,f10.6))') 'oldGrnd + oldEvec',maxval(orthoGrndEigVecsPre(:,3,1)),&
+          !! & (maxval(oldEvec(:,j)), j = 1,3)
+          !!write(*,'(A,4(2x,f10.6))') 'Grnd + Evec',maxval(grndEigVecs(:,3,1)),&
+          !! & (maxval(evec(:,j)), j = 1,3)
+          !!print *,'is oldGrnd alloacted', allocated(orthoGrndEigVecsPre), nocc_ud(1)
+          allocate(orthoGrndEigVecs(norb, norb, nSpin))
+          call orthoMolOrb(sSqr, grndEigVecs, orthoGrndEigVecs)
+          call overlapCI(iSpin, nstat, nxov_rd,  oldEvec, orthoGrndEigVecsPre, evec, &
+               & orthoGrndEigVecs, wij, win, getia, sqrt(eval), nocc_ud(1))
+          oldEvec(:) = evec(:,nstat)
+          orthoGrndEigVecsPre(:,:,:) = orthoGrndEigVecs
+
           call addGradients(sym, nxov_rd, this%nAtom, species0, iAtomStart, norb, nocc_ud,&
               & getia, win, grndEigVecs, pc, stimc, dq, dqex, gammaMat, this%HubbardU,&
               & this%spinW, shift, woo, wov, wvv, transChrg, xpy, coord0, orb, skHamCont,&

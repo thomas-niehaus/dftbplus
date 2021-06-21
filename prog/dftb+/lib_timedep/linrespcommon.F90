@@ -1233,4 +1233,169 @@ contains
 
   end subroutine writeExcMulliken
 
+  subroutine initStateFollowing(nstat, over, grndEigVecs, evec, orthoGrndEigVecsPre, oldEvec)
+
+    integer, intent(in) :: nstat
+    real(dp), intent(in) :: over(:,:)
+    real(dp), intent(in) :: grndEigVecs(:,:,:) 
+    real(dp), intent(in) :: evec(:,:)
+    real(dp), allocatable, intent(out) :: orthoGrndEigVecsPre(:,:,:)
+    real(dp), allocatable, intent(out) :: oldEvec(:)
+    integer :: nOrb, nSpin, nxov
+
+    if (allocated(orthoGrndEigVecsPre)) then
+       print *,'already allocated, quick return'
+      return
+    else
+       print *,'do allocation of evec'
+      nOrb = size(grndEigVecs, dim=1)
+      nSpin = size(grndEigVecs, dim=3)
+      nxov = size(evec, dim=1)
+      allocate(orthoGrndEigVecsPre(nOrb, nOrb, nSpin))
+      call orthoMolOrb(over, grndEigVecs, orthoGrndEigVecsPre)
+      allocate(oldEvec(nxov))
+      oldEvec(:) = evec(:,nstat)
+    end if
+  end subroutine initStateFollowing
+
+  subroutine orthoMolOrb(over, eigenVec, orthoEigenVec)
+    real(dp), intent(in) :: over(:,:)
+    real(dp), intent(in) :: eigenVec(:,:,:)
+    real(dp), intent(out) :: orthoEigenVec(:,:,:)
+
+    real(dp), allocatable :: sSqr(:,:), sp(:), aux(:), w(:), z(:,:)
+    real(dp), allocatable :: sTmp(:,:)
+    integer :: ii, jj, kk, nDim, info, mm, nn, iSpin, nSpin 
+
+    nDim = size(over, dim=1)
+    nSpin = size(eigenVec, dim=3)
+
+    allocate(sSqr(nDim, nDim))
+    allocate(sTmp(nDim, nDim))
+    allocate(sp(nDim*nDim))
+    allocate(z(nDim, nDim))
+    allocate(aux(3*nDim))
+    allocate(w(nDim))
+
+    kk = 0
+    do jj = 1, nDim
+      do ii = 1, jj
+        kk = kk + 1
+        sp(kk) = over(ii,jj)
+      end do
+    end do
+
+    call DSPEV('V', 'U', nDim, sp, w, z, nDim, aux, info)
+    if (info /= 0) then 
+      call error('Matrix diagonalization in orthoMolOrb failed.')
+    end if
+    if (minval(w) < 0.0_dp) then
+      call error('Overlap not positive semi-definite in orthoMolOrb.')
+    end if
+    
+    sSqr(:,:) = 0.0_dp
+    do ii = 1, nDim 
+      do nn = 1, nDim 
+        do mm = 1, nn
+          sSqr(mm,nn)  = sSqr(mm,nn)  + z(mm,ii) * dsqrt(w(ii)) * z(nn,ii)
+        end do
+      end do
+    end do
+
+    do nn = 1, nDim 
+      do mm = 1, nn-1
+        sSqr(nn,mm)  = sSqr(mm,nn) 
+      end do
+    end do
+
+
+    do iSpin = 1, nSpin
+      call symm(orthoEigenVec(:,:,iSpin), "L", sSqr, eigenVec(:,:,iSpin))
+    end do
+
+  end subroutine orthoMolOrb
+
+  subroutine overlapSlaterDeterminant(iSpin, nOcc, ii, aa, jj, bb, orthoVecA, orthoVecB, det)
+    integer, intent(in) :: iSpin, nOcc, ii, aa, jj, bb 
+    real(dp), intent(in) :: orthoVecA(:,:,:), orthoVecB(:,:,:) 
+    real(dp), intent(out) :: det
+
+    real(dp), allocatable :: slaterDet(:,:), iPiv(:)
+    integer :: nDim, pp, qq, ipp, iqq, info
+
+    allocate(slaterDet(nOcc,nOcc))
+    allocate(iPiv(nOcc))
+
+    nDim = size(orthoVecA, dim=1)
+    ipp = 0
+    do pp = 1, nDim
+      if (pp == ii .or. (pp > nOcc .and. pp /= aa)) cycle
+      ipp = ipp + 1
+      iqq = 0
+      do qq = 1, nDim
+        if (qq == jj .or. (qq > nOcc .and. qq /= bb)) cycle
+        iqq = iqq + 1
+        slaterDet(ipp,iqq) = dot_product(orthoVecA(:,pp,iSpin), orthoVecA(:,qq,iSpin))
+      end do
+    end do
+
+    call dgetrf(nOcc, nOcc, slaterDet, nOcc, iPiv, info)
+    if (info /= 0) then
+      call error('SlaterDeterminant: dgetrf returned non-zero exit.')
+    end if 
+    
+    det = 1.0_dp
+    do pp = 1, nOcc
+      if (iPiv(pp) /= pp) then
+        det = - det * slaterDet(pp,pp)
+      else 
+        det =   det * slaterDet(pp,pp)
+     end if
+    end do
+
+  end subroutine overlapSlaterDeterminant
+
+  subroutine overlapCI(iSpin, iActiveState, nxov, ciVecPre, orthoVecPre, ciVecsCur, orthoVecCur, &
+      & wij, win, getia, omega, nOcc)
+    integer, intent(in) :: iSpin, iActiveState, nxov, nOcc
+    real(dp), intent(in) :: ciVecPre(:), ciVecsCur(:,:)
+    real(dp), intent(in) :: orthoVecPre(:,:,:), orthoVecCur(:,:,:)
+
+    !> single particle excitation energies
+    real(dp), intent(in) :: wij(:)
+
+    !> index array for single particle transitions
+    integer, intent(in) :: win(:)
+
+    !> index from composite index to occupied and virtual single particle states
+    integer, intent(in) :: getia(:,:)  
+
+    real(dp), intent(in) :: omega(:)
+!!    
+    real(dp), allocatable :: vecXpYCur(:), vecXpYPre(:)
+    real(dp) :: over(3), det
+    integer :: iState, ias, ii, aa, ss, jbt, jj, bb, tt
+
+    allocate(vecXpYPre(nxov))
+    allocate(vecXpYCur(nxov))
+
+    vecXpYPre(:) = ciVecPre(:) * sqrt(wij(:nxov) / omega(iActiveState))
+    do iState = iActiveState - 1, iActiveState + 1
+      over(iState + 2 - iActiveState) = 0.0_dp
+      vecXpYCur(:) = ciVecsCur(:,iState) * sqrt(wij(:nxov) / omega(iState))
+      do ias = 1, nxov
+        if (abs(vecXpYCur(ias)) < 1.d-6) cycle
+        call indxov(win, ias, getia, ii, aa, ss)
+        do jbt = 1, nxov
+          if (abs(vecXpYPre(jbt)) < 1.d-6) cycle
+          call indxov(win, jbt, getia, jj, bb, tt)
+          call overlapSlaterDeterminant(1, nOcc, ii, aa, jj, bb, orthoVecCur, orthoVecPre, det)
+          over(iState + 2 - iActiveState) = over(iState + 2 - iActiveState) + det * vecXpYCur(ias) *&
+            & vecXpYPre(jbt)
+        end do
+      end do
+    end do
+    print *,'Overlap of CI', over
+        
+  end subroutine overlapCI
 end module dftbp_linrespcommon
