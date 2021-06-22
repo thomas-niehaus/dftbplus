@@ -1233,28 +1233,26 @@ contains
 
   end subroutine writeExcMulliken
 
-  subroutine initStateFollowing(nstat, over, grndEigVecs, evec, orthoGrndEigVecsPre, oldEvec)
+  subroutine initStateFollowing(iActiveState, over, grndEigVecs, evec, oldOrthoMO, oldEvec)
 
-    integer, intent(in) :: nstat
+    integer, intent(in) :: iActiveState
     real(dp), intent(in) :: over(:,:)
     real(dp), intent(in) :: grndEigVecs(:,:,:) 
     real(dp), intent(in) :: evec(:,:)
-    real(dp), allocatable, intent(out) :: orthoGrndEigVecsPre(:,:,:)
-    real(dp), allocatable, intent(out) :: oldEvec(:)
+    real(dp), allocatable, intent(inout) :: oldOrthoMO(:,:,:)
+    real(dp), allocatable, intent(inout) :: oldEvec(:)
     integer :: nOrb, nSpin, nxov
 
-    if (allocated(orthoGrndEigVecsPre)) then
-       print *,'already allocated, quick return'
+    if (allocated(oldOrthoMO)) then
       return
     else
-       print *,'do allocation of evec'
       nOrb = size(grndEigVecs, dim=1)
       nSpin = size(grndEigVecs, dim=3)
       nxov = size(evec, dim=1)
-      allocate(orthoGrndEigVecsPre(nOrb, nOrb, nSpin))
-      call orthoMolOrb(over, grndEigVecs, orthoGrndEigVecsPre)
+      allocate(oldOrthoMO(nOrb, nOrb, nSpin))
+      call orthoMolOrb(over, grndEigVecs, oldOrthoMO)
       allocate(oldEvec(nxov))
-      oldEvec(:) = evec(:,nstat)
+      oldEvec(:) = evec(:,iActiveState)
     end if
   end subroutine initStateFollowing
 
@@ -1315,15 +1313,16 @@ contains
 
   end subroutine orthoMolOrb
 
-  subroutine overlapSlaterDeterminant(iSpin, nOcc, ii, aa, jj, bb, orthoVecA, orthoVecB, det)
-    integer, intent(in) :: iSpin, nOcc, ii, aa, jj, bb 
+  subroutine overlapSlaterDeterminant(iSpin, nocc_ud, ii, aa, jj, bb, orthoVecA, orthoVecB, det)
+    integer, intent(in) :: iSpin, nocc_ud(:), ii, aa, jj, bb 
     real(dp), intent(in) :: orthoVecA(:,:,:), orthoVecB(:,:,:) 
     real(dp), intent(out) :: det
 
     real(dp), allocatable :: slaterDet(:,:), iPiv(:)
-    integer :: nDim, pp, qq, ipp, iqq, info
+    integer :: nDim, nOcc, pp, qq, ipp, iqq, info
 
-    allocate(slaterDet(nOcc,nOcc))
+    nOcc = nocc_ud(iSpin)
+    allocate(slaterDet(nOcc, nOcc))
     allocate(iPiv(nOcc))
 
     nDim = size(orthoVecA, dim=1)
@@ -1355,47 +1354,114 @@ contains
 
   end subroutine overlapSlaterDeterminant
 
-  subroutine overlapCI(iSpin, iActiveState, nxov, ciVecPre, orthoVecPre, ciVecsCur, orthoVecCur, &
-      & wij, win, getia, omega, nOcc)
-    integer, intent(in) :: iSpin, iActiveState, nxov, nOcc
-    real(dp), intent(in) :: ciVecPre(:), ciVecsCur(:,:)
-    real(dp), intent(in) :: orthoVecPre(:,:,:), orthoVecCur(:,:,:)
+  subroutine overlapCI(nSpin, iActiveState, nxov_rd, nocc_ud, wij, win, getia, eval, oldEvec, &
+         & newEvec, oldOrthoMO, newOrthoMO)
 
-    !> single particle excitation energies
+    integer, intent(in) :: nSpin
+    integer, intent(inout) :: iActiveState
+    integer, intent(in) :: nxov_rd
+    integer, intent(in) :: nocc_ud(:)
     real(dp), intent(in) :: wij(:)
-
-    !> index array for single particle transitions
     integer, intent(in) :: win(:)
-
-    !> index from composite index to occupied and virtual single particle states
     integer, intent(in) :: getia(:,:)  
+    real(dp), intent(in) :: eval(:)
+    real(dp), intent(in) :: oldEvec(:)
+    real(dp), intent(in) :: newEvec(:,:)
+    real(dp), intent(in) :: oldOrthoMO(:,:,:)
+    real(dp), intent(in) :: newOrthoMO(:,:,:)
 
-    real(dp), intent(in) :: omega(:)
-!!    
-    real(dp), allocatable :: vecXpYCur(:), vecXpYPre(:)
-    real(dp) :: over(3), det
+    real(dp), allocatable :: pro(:),epro(:)
+    real(dp), parameter :: TRESHCI = 1.d-1
+    real(dp) :: det,goo
     integer :: iState, ias, ii, aa, ss, jbt, jj, bb, tt
+    integer :: iStateMin, iStateMax
+    integer, parameter :: iWindow = 5
 
-    allocate(vecXpYPre(nxov))
-    allocate(vecXpYCur(nxov))
+    allocate(pro(2*iWindow + 1))
+    allocate(epro(2*iWindow + 1))
+ 
+    if (iActiveState - iWindow  < 1) then
+       iStateMin = 1
+    else
+       iStateMin = iActiveState - iWindow 
+    end if
+    iStateMax = iActiveState + iWindow
 
-    vecXpYPre(:) = ciVecPre(:) * sqrt(wij(:nxov) / omega(iActiveState))
-    do iState = iActiveState - 1, iActiveState + 1
-      over(iState + 2 - iActiveState) = 0.0_dp
-      vecXpYCur(:) = ciVecsCur(:,iState) * sqrt(wij(:nxov) / omega(iState))
-      do ias = 1, nxov
-        if (abs(vecXpYCur(ias)) < 1.d-6) cycle
-        call indxov(win, ias, getia, ii, aa, ss)
-        do jbt = 1, nxov
-          if (abs(vecXpYPre(jbt)) < 1.d-6) cycle
-          call indxov(win, jbt, getia, jj, bb, tt)
-          call overlapSlaterDeterminant(1, nOcc, ii, aa, jj, bb, orthoVecCur, orthoVecPre, det)
-          over(iState + 2 - iActiveState) = over(iState + 2 - iActiveState) + det * vecXpYCur(ias) *&
-            & vecXpYPre(jbt)
-        end do
-      end do
+    epro = 0.0_dp
+    do iState = iStateMin, iStateMax
+      epro(iState - iStateMin + 1) = dot_product(newEvec(:,iState),oldEvec(:))
     end do
-    print *,'Overlap of CI', over
+
+
+
+!!$    pro = 0.0_dp
+!!$    do iState = iStateMin, iStateMax
+!!$      do ias = 1, nxov_rd
+!!$        if (abs(newEvec(ias,iState)) < TRESHCI) cycle
+!!$        call indxov(win, ias, getia, ii, aa, ss)
+!!$        do jbt = 1, nxov_rd
+!!$          if (abs(oldEvec(jbt)) < TRESHCI) cycle
+!!$          call indxov(win, jbt, getia, jj, bb, tt)
+!!$          if (ss /= tt) cycle
+!!$          call overlapSlaterDeterminant(ss, nocc_ud, ii, aa, jj, bb, newOrthoMO, oldOrthoMO, det)
+!!$          pro(iState - iStateMin + 1) = pro(iState - iStateMin + 1) + det * newEvec(ias,iState) *&
+!!$            & oldEvec(jbt)
+!!$        end do
+!!$      end do
+!!$    end do
+    
+    pro(:) = abs(epro)
+
+    print *,'On entry: Active state',iActiveState
+    write(*,'(A,11(f10.6,2x))') 'Overlap of CI       ', pro
+    write(*,'(A,11(f10.6,2x))') 'simple Overlap of CI', abs(epro)
+    do iState = iStateMin, iStateMax 
+      if (abs(pro(iState - iStateMin + 1) - maxval(pro)) < epsilon(1.0_rsp)) then
+        if(iActiveState /= iState) then
+           write(*,'(1x,A,2x,i4)') '-> Active state was changed to: ', iState
+        endif
+        iActiveState = iState
+        exit
+      end if
+    end do
         
   end subroutine overlapCI
+
+  subroutine followState(nSpin, iActiveState, nxov_rd, nocc_ud, wij, win, getia, omega, over, &
+       & oldEvec, newEvec, grndEigVecs, oldOrthoMO)
+    
+    integer, intent(in) :: nSpin
+    integer, intent(inout) :: iActiveState
+    integer, intent(in) :: nxov_rd
+    integer, intent(in) :: nocc_ud(:)
+    real(dp), intent(in) :: wij(:)
+    integer, intent(in) :: win(:)
+    integer, intent(in) :: getia(:,:)  
+    real(dp), intent(in) :: omega(:)
+    real(dp), intent(in) :: over(:,:)
+    real(dp), intent(inout) :: oldEvec(:)
+    real(dp), intent(in) :: newEvec(:,:)
+    real(dp), intent(in) :: grndEigVecs(:,:,:)
+    real(dp), intent(inout) :: oldOrthoMO(:,:,:)
+
+    real(dp), allocatable :: newOrthoMO(:,:,:)
+    integer :: nOrb
+
+    nOrb = size(grndEigVecs, dim=1)
+    allocate(newOrthoMO(nOrb, nOrb, nSpin))
+
+    print *,'before ortho'
+    call orthoMolOrb(over, grndEigVecs, newOrthoMO)
+
+    print *,'before over'
+    call overlapCI(nSpin, iActiveState, nxov_rd, nocc_ud, wij, win, getia, omega, oldEvec, newEvec,&
+         & oldOrthoMO, newOrthoMO)
+    
+    oldEvec(:) = newEvec(:,iActiveState)
+    oldOrthoMO = newOrthoMO 
+
+  end subroutine followState
+    
+
+    
 end module dftbp_linrespcommon
