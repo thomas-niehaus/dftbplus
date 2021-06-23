@@ -608,11 +608,9 @@ contains
            &  nxoo_ud, nxvv_ud, nocc_ud, gammaMat, getia, getij, getab, iatrans, transChrg) 
    #:endblock DEBUG_CODE 
 
-      print *,'Main routine nstat on entry', nstat
       call initStateFollowing(nstat, SSqr, grndEigVecs, evec, oldOrthoMO, oldEvec)
       call followState(nSpin, nstat, nxov_rd, nocc_ud, wij, win, getia, eval, SSqr, &
            & oldEvec, evec, grndEigVecs, oldOrthoMO)
-      print *,'Main routine nstat on exit', nstat
 
       do iLev = nStartLev, nEndLev
 

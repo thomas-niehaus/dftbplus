@@ -1365,20 +1365,23 @@ contains
     integer, intent(in) :: win(:)
     integer, intent(in) :: getia(:,:)  
     real(dp), intent(in) :: eval(:)
-    real(dp), intent(in) :: oldEvec(:)
+    real(dp), intent(inout) :: oldEvec(:)
     real(dp), intent(in) :: newEvec(:,:)
     real(dp), intent(in) :: oldOrthoMO(:,:,:)
     real(dp), intent(in) :: newOrthoMO(:,:,:)
 
     real(dp), allocatable :: pro(:),epro(:)
     real(dp), parameter :: TRESHCI = 1.d-1
-    real(dp) :: det,goo
+    real(dp) :: det,goo, dot
+    integer, allocatable :: iSign(:,:) 
     integer :: iState, ias, ii, aa, ss, jbt, jj, bb, tt
-    integer :: iStateMin, iStateMax
+    integer :: iStateMin, iStateMax, iOrb, nOrb, iSpin
     integer, parameter :: iWindow = 5
 
+    nOrb = size(oldOrthoMO, dim=1)
     allocate(pro(2*iWindow + 1))
     allocate(epro(2*iWindow + 1))
+    allocate(iSign(nOrb, nSpin))
  
     if (iActiveState - iWindow  < 1) then
        iStateMin = 1
@@ -1387,34 +1390,48 @@ contains
     end if
     iStateMax = iActiveState + iWindow
 
+    do iSpin = 1, nSpin
+      do iOrb = 1, nOrb
+        dot = dot_product(newOrthoMO(:,iOrb,iSpin), oldOrthoMO(:,iOrb,iSpin))
+        if (dot < 0.0_dp) then
+          iSign(iOrb,iSpin) = -1
+        else
+          iSign(iOrb,iSpin) =  1
+        end if
+      end do
+    end do
+
+    do ias = 1, nxov_rd
+      call indxov(win, ias, getia, ii, aa, ss)
+      if (iSign(ii,ss) * iSign(aa,ss) == -1) then
+        oldEvec(ias) = - oldEvec(ias)
+      end if
+    end do
+         
     epro = 0.0_dp
     do iState = iStateMin, iStateMax
       epro(iState - iStateMin + 1) = dot_product(newEvec(:,iState),oldEvec(:))
     end do
 
-
-
-!!$    pro = 0.0_dp
-!!$    do iState = iStateMin, iStateMax
-!!$      do ias = 1, nxov_rd
-!!$        if (abs(newEvec(ias,iState)) < TRESHCI) cycle
-!!$        call indxov(win, ias, getia, ii, aa, ss)
-!!$        do jbt = 1, nxov_rd
-!!$          if (abs(oldEvec(jbt)) < TRESHCI) cycle
-!!$          call indxov(win, jbt, getia, jj, bb, tt)
-!!$          if (ss /= tt) cycle
-!!$          call overlapSlaterDeterminant(ss, nocc_ud, ii, aa, jj, bb, newOrthoMO, oldOrthoMO, det)
-!!$          pro(iState - iStateMin + 1) = pro(iState - iStateMin + 1) + det * newEvec(ias,iState) *&
-!!$            & oldEvec(jbt)
-!!$        end do
-!!$      end do
-!!$    end do
+    pro = 0.0_dp
+    do iState = iStateMin, iStateMax
+      do ias = 1, nxov_rd
+        if (abs(newEvec(ias,iState)) < TRESHCI) cycle
+        call indxov(win, ias, getia, ii, aa, ss)
+        do jbt = 1, nxov_rd
+          if (abs(oldEvec(jbt)) < TRESHCI) cycle
+          call indxov(win, jbt, getia, jj, bb, tt)
+          if (ss /= tt) cycle
+          call overlapSlaterDeterminant(ss, nocc_ud, ii, aa, jj, bb, newOrthoMO, oldOrthoMO, det)
+          pro(iState - iStateMin + 1) = pro(iState - iStateMin + 1) + det * newEvec(ias,iState) *&
+            & oldEvec(jbt)
+        end do
+      end do
+    end do
     
-    pro(:) = abs(epro)
+    pro(:) = abs(pro)
+    epro(:) = abs(epro)
 
-    print *,'On entry: Active state',iActiveState
-    write(*,'(A,11(f10.6,2x))') 'Overlap of CI       ', pro
-    write(*,'(A,11(f10.6,2x))') 'simple Overlap of CI', abs(epro)
     do iState = iStateMin, iStateMax 
       if (abs(pro(iState - iStateMin + 1) - maxval(pro)) < epsilon(1.0_rsp)) then
         if(iActiveState /= iState) then
@@ -1445,7 +1462,7 @@ contains
     real(dp), intent(inout) :: oldOrthoMO(:,:,:)
 
     real(dp), allocatable :: newOrthoMO(:,:,:)
-    integer :: nOrb
+    integer :: nOrb,i
 
     nOrb = size(grndEigVecs, dim=1)
     allocate(newOrthoMO(nOrb, nOrb, nSpin))
@@ -1454,6 +1471,9 @@ contains
     call orthoMolOrb(over, grndEigVecs, newOrthoMO)
 
     print *,'before over'
+    write(*,'(A,10(2x,f10.6))') 'this is OldEvec', (oldEvec(i), i = 1,10)
+    write(*,'(A,10(2x,f10.6))') 'this is NewEvec 6', (newEvec(i,6), i = 1,10)
+    write(*,'(A,10(2x,f10.6))') 'this is NewEvec 2', (newEvec(i,2), i = 1,10)
     call overlapCI(nSpin, iActiveState, nxov_rd, nocc_ud, wij, win, getia, omega, oldEvec, newEvec,&
          & oldOrthoMO, newOrthoMO)
     
