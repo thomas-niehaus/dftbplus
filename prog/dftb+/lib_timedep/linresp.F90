@@ -106,6 +106,15 @@ module dftbp_linresp
     !> diagnose output of Arnoldi solver
     logical :: tDiagnoseArnoldi
 
+    !> Excited state following in geometry optimizations?
+    logical :: tStateFollowing
+
+    !> Threshold for CI expansion in excited state overlap evaluation
+    real(dp) :: overlapTresholdCI
+
+    !> Should CI overlap be computed only based on the CI vector?
+    logical :: tOverlapOnlyFromCI
+
     !> Initialised data structure?
     logical :: tInit = .false.
 
@@ -149,6 +158,10 @@ contains
       this%tCacheCharges = ini%tCacheCharges
       this%nStat = ini%nStat
       this%symmetry = ini%sym
+      !! State following
+      this%tStateFollowing = ini%tStateFollowing
+      this%overlapTresholdCI = ini%overlapTresholdCI
+      this%tOverlapOnlyFromCI = ini%tOverlapOnlyFromCI
 
       this%tWriteDensityMatrix = ini%tWriteDensityMatrix
 

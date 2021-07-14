@@ -608,9 +608,14 @@ contains
            &  nxoo_ud, nxvv_ud, nocc_ud, gammaMat, getia, getij, getab, iatrans, transChrg) 
    #:endblock DEBUG_CODE 
 
-      call initStateFollowing(nstat, SSqr, grndEigVecs, evec, oldOrthoMO, oldEvec)
-      call followState(nSpin, nstat, nxov_rd, nocc_ud, wij, win, getia, eval, SSqr, &
-           & oldEvec, evec, grndEigVecs, oldOrthoMO)
+      ! Follow a given state during geometry optimization, based on wave function overlap
+      ! This routine might change nstat, the active state
+      if(this%tStateFollowing) then
+        call initStateFollowing(nstat, SSqr, grndEigVecs, evec, oldOrthoMO, oldEvec)
+        call followState(this%overlapTresholdCI, this%tOverlapOnlyFromCI, nSpin, nstat, &
+            & nxov_rd, nocc_ud, wij, win, getia, eval, osz, SSqr, oldEvec, evec, grndEigVecs,&
+            & oldOrthoMO)
+      end if
 
       do iLev = nStartLev, nEndLev
 

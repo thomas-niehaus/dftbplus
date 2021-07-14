@@ -102,6 +102,15 @@ module dftbp_linresptypes
     !> file unit for Arnoldi solver tests, if this is < 1 no tests are performed
     integer :: fdArnoldiDiagnosis = -1
 
+    !> Excited state following in geometry optimizations?
+    logical :: tStateFollowing
+
+    !> Threshold for CI expansion in excited state overlap evaluation
+    real(dp) :: overlapTresholdCI
+
+    !> Should CI overlap be computed only based on the CI vector?
+    logical :: tOverlapOnlyFromCI
+
     !> Is the data structure initialised?
     logical :: tInit = .false.
 

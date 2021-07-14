@@ -4639,6 +4639,12 @@ contains
       end if
       call getChildValue(child, "WriteStatusArnoldi", ctrl%lrespini%tArnoldi, default=.false.)
       call getChildValue(child, "TestArnoldi", ctrl%lrespini%tDiagnoseArnoldi, default=.false.)
+      ! Excited state following
+      call getChildValue(child, "StateFollowing", ctrl%lrespini%tStateFollowing, default=.false.)
+      call getChildValue(child, "OverlapTresholdCI", ctrl%lrespini%overlapTresholdCI, &
+           & default=0.1_dp)
+      call getChildValue(child, "OverlapOnlyFromCI", ctrl%lrespini%tOverlapOnlyFromCI, &
+           & default=.false.)
 
       if (ctrl%tForces .or. ctrl%tPrintForces) then
         call getChildValue(child, "ExcitedStateForces", ctrl%tCasidaForces, default=.true.)

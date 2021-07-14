@@ -70,6 +70,8 @@ module dftbp_rs_linearresponse
   integer :: ndigit
   integer :: msaupd, msaup2, msaitr, mseigt, msapps, msgets, mseupd
 
+  !> Variables for state following in excited state optimization
+  real(dp), allocatable :: oldOrthoMO(:,:,:), oldEvec(:)
 contains
 
   !!> Computes compound occ-occ excitation index from individual indices.
@@ -731,7 +733,8 @@ contains
       & rNel, iNeighbor, img2CentCell, orb, rsData, tWriteTagged, fdTagged, taggedWriter,&
       & fdMulliken, fdCoeffs, fdXplusY, fdTrans, fdSPTrans, fdTraDip, fdTransQ, tArnoldi,&
       & fdArnoldi, fdExc, tEnergyWindow, energyWindow, tOscillatorWindow, oscillatorWindow,&
-      & tCacheCharges, omega, shift, skHamCont, skOverCont, derivator, deltaRho, excGrad, dQAtomEx)
+      & tCacheCharges, tStateFollowing, overlapTresholdCI, tOverlapOnlyFromCI, omega, shift,&
+      & skHamCont, skOverCont, derivator, deltaRho, excGrad, dQAtomEx)
     logical, intent(in) :: spin
     logical, intent(in) :: tOnsite
     integer, intent(in) :: nAtom, iAtomStart(:)
@@ -782,6 +785,10 @@ contains
     logical, intent(in) :: tEnergyWindow, tOscillatorWindow
     real(dp), intent(in) :: energyWindow, oscillatorWindow
     logical, intent(in) :: tCacheCharges
+    logical, intent(in) :: tStateFollowing
+    real(dp), intent(in) :: overlapTresholdCI
+    logical, intent(in) :: tOverlapOnlyFromCI
+
     real(dp), intent(out) :: omega
     real(dp), intent(in), optional :: shift(:)
     real(dp), intent(inout), optional :: deltaRho(:,:)
@@ -802,7 +809,8 @@ contains
     integer, allocatable :: win(:), iaTrans(:,:,:), getIA(:,:), getIJ(:,:), getAB(:,:)
     character, allocatable :: symmetries(:)
 
-    integer :: nStat, nOcc, nOccR, nVirR, nXooR, nXvvR, nXoo, nXvv, nXooUD(2), nXvvUD(2)
+    integer, save :: nstat
+    integer :: nOcc, nOccR, nVirR, nXooR, nXvvR, nXoo, nXvv, nXooUD(2), nXvvUD(2)
     integer :: mHOMO, mLUMO, nXoo_max, nXvv_max 
     integer, allocatable :: nOccUD(:), nVirUD(:)
     integer :: nXov, nXovUD(2), nXovR, nXovD, nXovRD, nOrb
@@ -945,7 +953,9 @@ contains
     tZVector = tGrads .or. tMulliken .or. tCoeffs .or. tTransQ
 
     ! Sanity checks
-    nStat = nStat0
+    if (.not. allocated(oldEvec)) then
+      nStat = nStat0
+    end if 
     if (nStat < 0 .and. cSym /= "S") then
       call error("Linresp: Brightest mode only for singlets.")
     elseif (nStat /= 0 .and. cSym == "B") then
@@ -1204,6 +1214,13 @@ contains
     if (nStat == 0) then
       omega = 0.0_dp
       return
+    end if
+
+    if(tStateFollowing) then
+      call initStateFollowing(nstat, SSqr, grndEigVecs, evec, oldOrthoMO, oldEvec)
+      call followState(overlapTresholdCI, tOverlapOnlyFromCI, nSpin, nstat, &
+          & nXovRD, nOccUD, wij, win, getIA, eval, oscStrength, SSqr, oldEvec, evec, &
+          & grndEigVecs, oldOrthoMO)
     end if
 
     ! Attention: right now I take sqrt in rsLinRespCalc. May not want to do this!!!
@@ -1857,7 +1874,8 @@ contains
           & fdTagged, taggedWriter, this%fdMulliken, this%fdCoeffs, this%fdXplusY, this%fdTrans,&
           & this%fdSPTrans, this%fdTraDip, this%fdTransQ, this%tArnoldi, this%fdArnoldi,&
           & this%fdExc, this%tEnergyWindow, this%energyWindow, this%tOscillatorWindow,&
-          & this%oscillatorWindow, this%tCacheCharges, excEnergy)
+          & this%oscillatorWindow, this%tCacheCharges, this%tStateFollowing,&
+          & this%overlapTresholdCI, this%tOverlapOnlyFromCI, excEnergy)
     else
       allocate(shiftPerAtom(nAtom))
       allocate(shiftPerL(orb%mShell, nAtom))
@@ -1871,7 +1889,8 @@ contains
           & fdTagged, taggedWriter, this%fdMulliken, this%fdCoeffs, this%fdXplusY, this%fdTrans,&
           & this%fdSPTrans, this%fdTraDip, this%fdTransQ, this%tArnoldi, this%fdArnoldi,&
           & this%fdExc, this%tEnergyWindow, this%energyWindow, this%tOscillatorWindow,&
-          & this%oscillatorWindow, this%tCacheCharges, excEnergy, shiftPerAtom, skHamCont,&
+          & this%oscillatorWindow, this%tCacheCharges, this%tStateFollowing,&
+          & this%overlapTresholdCI, this%tOverlapOnlyFromCI, excEnergy, shiftPerAtom, skHamCont,&
           & skOverCont, derivator, deltaRho, excGrad, dQAtomEx)
     end if
 
