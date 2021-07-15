@@ -1410,53 +1410,41 @@ contains
     write(*,'(A15,2x,10(2x,f6.3))') 'Olde Evec:     ',(oldEvec(ii), ii = 1, 10)
     write(*,'(A15,2x,10(2x,f6.3))') 'New 1:         ',(newEvec(ii,1), ii = 1, 10)
     write(*,'(A15,2x,10(2x,f6.3))') 'New 2:         ',(newEvec(ii,2), ii = 1, 10)
-!!$    do iOrb = 1, nOrb
-!!$     write(*,'(2x,i2,2x,f6.3)') iOrb, (oldOrthoMO(1,iOrb,1)/newOrthoMO(1,iOrb,1)) / &
-!!$         & abs((oldOrthoMO(1,iOrb,1)/newOrthoMO(1,iOrb,1)))
-!!$     !!write(*,'(i2,A7,2x,2(2x,f6.3),A7,2x,2(2x,f6.3))') iOrb,'Olde MO:',&
-!!$       !!  & (oldOrthoMO(ii,iOrb,1), ii = 1, 2), 'New MO:',(newOrthoMO(ii,iOrb,1), ii = 1, 2)
-!!$    enddo
-!!$
-!!$    do iSpin = 1, nSpin
-!!$      do iOrb = 1, nOrb
-!!$        do jOrb = 1, nOrb
-!!$          proMO(jOrb) = dot_product(newOrthoMO(:,jOrb,iSpin), oldOrthoMO(:,iOrb,iSpin))
-!!$        end do
-!!$        if (maxval(abs(proMO)) < treshSim) then
-!!$          write(*,*) 'WARNING: MO between different steps too dissimilar, better reduce StepSize!'
-!!$        end if 
-!!$!!        print *,'moproj', iOrb, maxloc(proMO),maxval(proMO),maxloc(abs(proMO)),maxval(abs(proMO))
-!!$        if (minval(proMO) == - maxval(abs(proMO))) then
-!!$          iSign(iOrb,iSpin) = -1
-!!$        else
-!!$          iSign(iOrb,iSpin) =  1
-!!$        end if
-!!$        !!print *, 'and the sign', iOrb, iSign(iOrb,iSpin)
-!!$        oldOrthoMO(:,iOrb,iSpin) = iSign(iOrb,iSpin) * oldOrthoMO(:,iOrb,iSpin)
-!!$      end do
-!!$    end do
+ 
+    do iSpin = 1, nSpin
+      do iOrb = 1, nOrb
+        do jOrb = 1, nOrb
+          proMO(jOrb) = dot_product(newOrthoMO(:,jOrb,iSpin), oldOrthoMO(:,iOrb,iSpin))
+        end do
+        if (maxval(abs(proMO)) < treshSim) then
+          write(*,*) 'WARNING: MO between different steps too dissimilar, better reduce StepSize!'
+        end if 
+        if (minval(proMO) == - maxval(abs(proMO))) then
+          iSign(iOrb,iSpin) = -1
+        else
+          iSign(iOrb,iSpin) =  1
+        end if
+        oldOrthoMO(:,iOrb,iSpin) = iSign(iOrb,iSpin) * oldOrthoMO(:,iOrb,iSpin)
+      end do
+    end do
 
-!!$    do ias = 1, 10
-!!$      call indxov(win, ias, getia, ii, aa, ss)
-!!$      print *,'ias', ias, ii, iSign(ii,ss), aa, iSign(aa,ss)
-!!$    enddo
-!!$    do ias = 1, nxov_rd
-!!$      call indxov(win, ias, getia, ii, aa, ss)
-!!$      !!print *,'ias', ias, ii, iSign(ii,ss), aa, iSign(aa,ss)
-!!$      if (iSign(ii,ss) * iSign(aa,ss) == -1) then
-!!$        oldEvec(ias) = - oldEvec(ias)
-!!$      end if
-!!$    end do
-!!$
-!!$    write(*,'(A15,2x,10(2x,f6.3))') 'Mod  Evec:     ',(oldEvec(ii), ii = 1, 10)
+!!    do ias = 1, 10
+!!      call indxov(win, ias, getia, ii, aa, ss)
+!!      print *,'ias', ias, ii, iSign(ii,ss), aa, iSign(aa,ss), 'fin: ',iSign(ii,ss)*iSign(aa,ss)
+!!    enddo
+    do ias = 1, nxov_rd
+      call indxov(win, ias, getia, ii, aa, ss)
+      if (iSign(ii,ss) * iSign(aa,ss) == -1) then
+        oldEvec(ias) = - oldEvec(ias)
+      end if
+    end do
 
-!!    write(*,'(A15,2x,5(2x,f6.3))') 'Olde MO:       ',(oldOrthoMO(ii,1,1), ii = 1, 5)
-!!    write(*,'(A15,2x,5(2x,f6.3))') 'Mew MO:        ',(newOrthoMO(ii,1,1), ii = 1, 5)
-         
+    write(*,'(A15,2x,10(2x,f6.3))') 'Mod  Evec:     ',(oldEvec(ii), ii = 1, 10)
+
     pro = 0.0_dp
     if (tOverlapOnlyFromCI) then
       do iState = iStateMin, iStateMax
-        pro(iState-iStateMin+1) = dot_product(abs(newEvec(:,iState)),abs(oldEvec(:)))
+        pro(iState-iStateMin+1) = dot_product(newEvec(:,iState),oldEvec(:))
       end do
     else 
       do iState = iStateMin, iStateMax
@@ -1468,9 +1456,8 @@ contains
             call indxov(win, jbt, getia, jj, bb, tt)
             if (ss /= tt) cycle
             call overlapSlaterDeterminant(ss, nocc_ud, ii, aa, jj, bb, newOrthoMO, oldOrthoMO, det)
-  !!          write(*,'(A,5(2x,i2),2x,f6.3)') 'Det', iState,ii,aa,jj,bb,det
-            pro(iState-iStateMin+1) = pro(iState-iStateMin+1) + abs(det * newEvec(ias,iState) *&
-              & oldEvec(jbt))
+            pro(iState-iStateMin+1) = pro(iState-iStateMin+1) + det * newEvec(ias,iState) *&
+              & oldEvec(jbt)
           end do
         end do
       end do
