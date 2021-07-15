@@ -67,7 +67,7 @@ module dftbp_linrespgrad
       &    mcaupd, mcaup2, mcaitr, mceigh, mcapps, mcgets, mceupd
 
   !> Variables for state following in excited state optimization
-  real(dp), allocatable :: oldOrthoMO(:,:,:), oldEvec(:)
+  real(dp), allocatable :: oldOrthoMO(:,:,:), oldEvec(:), oldOcc(:,:)
 contains
 
   !> This subroutine analytically calculates excitations and gradients of excited state energies
@@ -611,10 +611,11 @@ contains
       ! Follow a given state during geometry optimization, based on wave function overlap
       ! This routine might change nstat, the active state
       if(this%tStateFollowing) then
-        call initStateFollowing(nstat, SSqr, grndEigVecs, evec, oldOrthoMO, oldEvec)
+        call initStateFollowing(nstat, nocc_ud, wij, win, getia, iatrans, eval, SSqr, grndEigVecs,&
+             filling, evec, oldOrthoMO, oldEvec, oldOcc)
         call followState(this%overlapTresholdCI, this%tOverlapOnlyFromCI, nSpin, nstat, &
-            & nxov_rd, nocc_ud, wij, win, getia, eval, osz, SSqr, oldEvec, evec, grndEigVecs,&
-            & oldOrthoMO)
+            & nxov_rd, nocc_ud, wij, win, getia, iatrans, eval, osz, SSqr, oldEvec, evec,&
+            & grndEigVecs, filling, oldOrthoMO, oldOcc)
       end if
 
       do iLev = nStartLev, nEndLev
@@ -629,6 +630,7 @@ contains
             & nxov_ud(1), getia, iatrans, this%nAtom, species0,grndEigVal,&
             & stimc, grndEigVecs, gammaMat, this%spinW, omega, sym, rhs, t,&
             & wov, woo, wvv, transChrg)
+
         call solveZVectorPrecond(rhs, win, nxov_ud(1), getia, this%nAtom, iAtomStart,&
             & stimc, gammaMat, wij(:nxov_rd), grndEigVecs, transChrg, species0, this%spinW)
         call calcWVectorZ(rhs, win, nocc_ud, nxov_ud(1), getia, iAtomStart,&

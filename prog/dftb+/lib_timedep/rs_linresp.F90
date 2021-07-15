@@ -71,7 +71,7 @@ module dftbp_rs_linearresponse
   integer :: msaupd, msaup2, msaitr, mseigt, msapps, msgets, mseupd
 
   !> Variables for state following in excited state optimization
-  real(dp), allocatable :: oldOrthoMO(:,:,:), oldEvec(:)
+  real(dp), allocatable :: oldOrthoMO(:,:,:), oldEvec(:), oldOcc(:,:)
 contains
 
   !!> Computes compound occ-occ excitation index from individual indices.
@@ -1217,10 +1217,11 @@ contains
     end if
 
     if(tStateFollowing) then
-      call initStateFollowing(nstat, SSqr, grndEigVecs, evec, oldOrthoMO, oldEvec)
+      call initStateFollowing(nstat, nOccUD, wij, win, getIA, iaTrans, eval, SSqr, grndEigVecs,&
+           & filling, evec, oldOrthoMO, oldEvec, oldOcc)
       call followState(overlapTresholdCI, tOverlapOnlyFromCI, nSpin, nstat, &
-          & nXovRD, nOccUD, wij, win, getIA, eval, oscStrength, SSqr, oldEvec, evec, &
-          & grndEigVecs, oldOrthoMO)
+          & nXovRD, nOccUD, wij, win, getIA, iaTrans, eval, oscStrength, SSqr, oldEvec, evec, &
+          & grndEigVecs, filling, oldOrthoMO, oldOcc)
     end if
 
     ! Attention: right now I take sqrt in rsLinRespCalc. May not want to do this!!!
