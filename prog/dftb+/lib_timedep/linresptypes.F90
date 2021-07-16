@@ -105,12 +105,6 @@ module dftbp_linresptypes
     !> Excited state following in geometry optimizations?
     logical :: tStateFollowing
 
-    !> Threshold for CI expansion in excited state overlap evaluation
-    real(dp) :: overlapTresholdCI
-
-    !> Should CI overlap be computed only based on the CI vector?
-    logical :: tOverlapOnlyFromCI
-
     !> Is the data structure initialised?
     logical :: tInit = .false.
 

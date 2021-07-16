@@ -5071,6 +5071,17 @@ contains
       end if
     end if
 
+    if(input%ctrl%lrespini%energyWindow /= 0.0_dp .or. &
+       & input%ctrl%lrespini%oscillatorWindow /= 0.0_dp) then
+      if (input%ctrl%lrespini%tStateFollowing) then
+        call error("StateFollowing and Windowing incompatible")
+      end if
+    end if
+    if (input%ctrl%lrespini%tStateFollowing .and. tSpin) then
+      call error("StateFollowing and Spin not yet tested.")
+    end if
+
+
   end subroutine ensureLinRespConditions
 
 

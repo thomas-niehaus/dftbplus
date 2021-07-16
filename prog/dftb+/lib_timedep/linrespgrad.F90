@@ -67,7 +67,7 @@ module dftbp_linrespgrad
       &    mcaupd, mcaup2, mcaitr, mceigh, mcapps, mcgets, mceupd
 
   !> Variables for state following in excited state optimization
-  real(dp), allocatable :: oldOrthoMO(:,:,:), oldEvec(:), oldOcc(:,:)
+  real(dp), allocatable :: oldOrthoTO(:,:,:), oldTransOcc(:,:)
 contains
 
   !> This subroutine analytically calculates excitations and gradients of excited state energies
@@ -198,8 +198,7 @@ contains
     !> transition charges, either cached or evaluated on demand
     type(TTransCharges) :: transChrg
 
-    real(dp), allocatable :: orthoGrndEigVecs(:,:,:)
-    real(dp) :: det
+    real(dp), allocatable :: sSqrRoot(:,:)
 
     if (withArpack) then
 
@@ -322,7 +321,7 @@ contains
         & this%tWriteDensityMatrix
 
     ! Sanity checks
-    if (.not. allocated(oldEvec)) then
+    if (.not. allocated(oldOrthoTO)) then
       nstat = this%nStat
     end if
     if (nstat < 0 .and. this%symmetry /= "S") then
@@ -611,11 +610,12 @@ contains
       ! Follow a given state during geometry optimization, based on wave function overlap
       ! This routine might change nstat, the active state
       if(this%tStateFollowing) then
+        allocate(sSqrRoot(norb, norb))
+        call squareRootOverlap(SSqr, sSqrRoot)
         call initStateFollowing(nstat, nocc_ud, wij, win, getia, iatrans, eval, SSqr, grndEigVecs,&
-             filling, evec, oldOrthoMO, oldEvec, oldOcc)
-        call followState(this%overlapTresholdCI, this%tOverlapOnlyFromCI, nSpin, nstat, &
-            & nxov_rd, nocc_ud, wij, win, getia, iatrans, eval, osz, SSqr, oldEvec, evec,&
-            & grndEigVecs, filling, oldOrthoMO, oldOcc)
+             filling, evec, oldOrthoTO, oldTransOcc, sSqrRoot)
+        call followState(nSpin, nstat, nxov_rd, nocc_ud, wij, win, getia, iatrans, eval, osz, &
+             & SSqr, evec, grndEigVecs, filling, oldOrthoTO, oldTransOcc, sSqrRoot)
       end if
 
       do iLev = nStartLev, nEndLev
@@ -2101,30 +2101,6 @@ contains
     end if
 
   end subroutine writeCoeffs
-
-
-  !> Project MO density matrix onto ground state orbitals
-  subroutine evalCoeffs(t2, occ, eig)
-
-    !> density matrix
-    real(dp), intent(inout) :: t2(:,:)
-
-    !> resulting natural orbital occupations
-    real(dp), intent(out) :: occ(:)
-
-    !> 'natural' eigenvectors
-    real(dp), intent(in) :: eig(:,:)
-
-    real(dp), allocatable :: coeffs(:,:)
-
-    ALLOCATE(coeffs(size(occ),size(occ)))
-
-    call heev(t2, occ, 'U', 'V')
-    call gemm(coeffs, eig, t2)
-    t2 = coeffs
-
-  end subroutine evalCoeffs
-
 
   !> Write out transitions from ground to excited state along with single particle transitions and
   !> dipole strengths

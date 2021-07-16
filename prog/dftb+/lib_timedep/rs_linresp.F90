@@ -71,7 +71,7 @@ module dftbp_rs_linearresponse
   integer :: msaupd, msaup2, msaitr, mseigt, msapps, msgets, mseupd
 
   !> Variables for state following in excited state optimization
-  real(dp), allocatable :: oldOrthoMO(:,:,:), oldEvec(:), oldOcc(:,:)
+  real(dp), allocatable :: oldOrthoTO(:,:,:), oldTransOcc(:,:)
 contains
 
   !!> Computes compound occ-occ excitation index from individual indices.
@@ -733,8 +733,8 @@ contains
       & rNel, iNeighbor, img2CentCell, orb, rsData, tWriteTagged, fdTagged, taggedWriter,&
       & fdMulliken, fdCoeffs, fdXplusY, fdTrans, fdSPTrans, fdTraDip, fdTransQ, tArnoldi,&
       & fdArnoldi, fdExc, tEnergyWindow, energyWindow, tOscillatorWindow, oscillatorWindow,&
-      & tCacheCharges, tStateFollowing, overlapTresholdCI, tOverlapOnlyFromCI, omega, shift,&
-      & skHamCont, skOverCont, derivator, deltaRho, excGrad, dQAtomEx)
+      & tCacheCharges, tStateFollowing, omega, shift, skHamCont, skOverCont, derivator, &
+      & deltaRho, excGrad, dQAtomEx)
     logical, intent(in) :: spin
     logical, intent(in) :: tOnsite
     integer, intent(in) :: nAtom, iAtomStart(:)
@@ -786,8 +786,6 @@ contains
     real(dp), intent(in) :: energyWindow, oscillatorWindow
     logical, intent(in) :: tCacheCharges
     logical, intent(in) :: tStateFollowing
-    real(dp), intent(in) :: overlapTresholdCI
-    logical, intent(in) :: tOverlapOnlyFromCI
 
     real(dp), intent(out) :: omega
     real(dp), intent(in), optional :: shift(:)
@@ -836,6 +834,8 @@ contains
     !> aux variables
     integer :: mu, nu
     character(lc) :: tmpStr
+    
+    real(dp), allocatable :: sSqrRoot(:,:)
 
     ! For now, spin-polarized calculation not supported
     tSpin = .false.
@@ -953,7 +953,7 @@ contains
     tZVector = tGrads .or. tMulliken .or. tCoeffs .or. tTransQ
 
     ! Sanity checks
-    if (.not. allocated(oldEvec)) then
+    if (.not. allocated(oldOrthoTO)) then
       nStat = nStat0
     end if 
     if (nStat < 0 .and. cSym /= "S") then
@@ -1217,11 +1217,12 @@ contains
     end if
 
     if(tStateFollowing) then
+      allocate(sSqrRoot(nOrb, nOrb))
+      call squareRootOverlap(SSqr, sSqrRoot)
       call initStateFollowing(nstat, nOccUD, wij, win, getIA, iaTrans, eval, SSqr, grndEigVecs,&
-           & filling, evec, oldOrthoMO, oldEvec, oldOcc)
-      call followState(overlapTresholdCI, tOverlapOnlyFromCI, nSpin, nstat, &
-          & nXovRD, nOccUD, wij, win, getIA, iaTrans, eval, oscStrength, SSqr, oldEvec, evec, &
-          & grndEigVecs, filling, oldOrthoMO, oldOcc)
+           & filling, evec, oldOrthoTO, oldTransOcc, sSqrRoot)
+      call followState(nSpin, nstat, nXovRD, nOccUD, wij, win, getIA, iaTrans, eval, oscStrength,&
+           & SSqr, evec, grndEigVecs, filling, oldOrthoTO, oldTransOcc, sSqrRoot)
     end if
 
     ! Attention: right now I take sqrt in rsLinRespCalc. May not want to do this!!!
@@ -1875,8 +1876,7 @@ contains
           & fdTagged, taggedWriter, this%fdMulliken, this%fdCoeffs, this%fdXplusY, this%fdTrans,&
           & this%fdSPTrans, this%fdTraDip, this%fdTransQ, this%tArnoldi, this%fdArnoldi,&
           & this%fdExc, this%tEnergyWindow, this%energyWindow, this%tOscillatorWindow,&
-          & this%oscillatorWindow, this%tCacheCharges, this%tStateFollowing,&
-          & this%overlapTresholdCI, this%tOverlapOnlyFromCI, excEnergy)
+          & this%oscillatorWindow, this%tCacheCharges, this%tStateFollowing, excEnergy)
     else
       allocate(shiftPerAtom(nAtom))
       allocate(shiftPerL(orb%mShell, nAtom))
@@ -1890,9 +1890,8 @@ contains
           & fdTagged, taggedWriter, this%fdMulliken, this%fdCoeffs, this%fdXplusY, this%fdTrans,&
           & this%fdSPTrans, this%fdTraDip, this%fdTransQ, this%tArnoldi, this%fdArnoldi,&
           & this%fdExc, this%tEnergyWindow, this%energyWindow, this%tOscillatorWindow,&
-          & this%oscillatorWindow, this%tCacheCharges, this%tStateFollowing,&
-          & this%overlapTresholdCI, this%tOverlapOnlyFromCI, excEnergy, shiftPerAtom, skHamCont,&
-          & skOverCont, derivator, deltaRho, excGrad, dQAtomEx)
+          & this%oscillatorWindow, this%tCacheCharges, this%tStateFollowing, excEnergy, &
+          & shiftPerAtom, skHamCont, skOverCont, derivator, deltaRho, excGrad, dQAtomEx)
     end if
 
   end subroutine linRespCalcExcitationsRS

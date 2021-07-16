@@ -1234,8 +1234,12 @@ contains
 
   end subroutine writeExcMulliken
 
+  !! Build transition density matrix t and transition orbitals and occupations for target state
+  !! Orthonormalize TO with S^(1/2)
+  !! Only done first geometry step 
+  !! Not tested for windowed TD-DFTB!
   subroutine initStateFollowing(iActiveState, nocc_ud, wij, win, getia, iatrans, omega, over,&
-             & grndEigVecs, filling, evec, oldOrthoMO, oldEvec, oldOcc)
+             & grndEigVecs, filling, evec, oldOrthoTO, oldTransOcc, sSqrRoot)
 
     integer, intent(in) :: iActiveState
     integer, intent(in) :: nocc_ud(:)
@@ -1243,50 +1247,51 @@ contains
     integer, intent(in) :: win(:)
     integer, intent(in) :: getia(:,:)  
     integer, intent(in) :: iatrans(:,:,:)
-    real(dp), intent(in) :: omega(:)
+    real(dp), intent(in) :: omega(:) !! Not yet taken square root
     real(dp), intent(in) :: over(:,:)
     real(dp), intent(in) :: grndEigVecs(:,:,:) 
     real(dp), intent(in) :: filling(:,:)
     real(dp), intent(in) :: evec(:,:)
-    real(dp), allocatable, intent(inout) :: oldOrthoMO(:,:,:)
-    real(dp), allocatable, intent(inout) :: oldEvec(:)
-    real(dp), allocatable, intent(inout) :: oldOcc(:,:)
-    integer :: nOrb, nSpin, nxov, ii, jj, iSpin
+    real(dp), allocatable, intent(inout) :: oldOrthoTO(:,:,:)
+    real(dp), allocatable, intent(inout) :: oldTransOcc(:,:)
+    real(dp), intent(in) :: sSqrRoot(:,:)
+    integer :: nOrb, nSpin, nxov, iSpin
     real(dp), allocatable :: t(:,:,:)
 
-    if (allocated(oldOrthoMO)) then
+    !! If this is not the first call in a geometry relaxation, quick return
+    if (allocated(oldOrthoTO)) then
       return
     else
       nOrb = size(grndEigVecs, dim=1)
       nSpin = size(grndEigVecs, dim=3)
       nxov = size(evec, dim=1)
-      allocate(oldOrthoMO(nOrb, nOrb, nSpin))
-      allocate(oldOcc(nOrb, nSpin))
+
+      allocate(oldOrthoTO(nOrb, nOrb, nSpin))
+      allocate(oldTransOcc(nOrb, nSpin))
       allocate(t(nOrb, nOrb, nSpin))
+
       call buildExcDnsMat(nxov, nocc_ud, win, wij, getia, iatrans, evec(:,iActiveState),&
            & filling, sqrt(omega(iActiveState)), t)
+
       do iSpin = 1, nSpin
-        call evalCoeffsCopy(t(:,:,iSpin), oldOcc(:,iSpin), grndEigVecs(:,:,iSpin))
+        call evalCoeffs(t(:,:,iSpin), oldTransOcc(:,iSpin), grndEigVecs(:,:,iSpin))
+        call symm(oldOrthoTO(:,:,iSpin), "L", sSqrRoot, t(:,:,iSpin))
       end do
-      call orthoMolOrb(over, t, oldOrthoMO)
-      allocate(oldEvec(nxov))
-      oldEvec(:) = evec(:,iActiveState)
+
     end if
   end subroutine initStateFollowing
 
-  subroutine orthoMolOrb(over, eigenVec, orthoEigenVec)
+  !! Computes S^(1/2) (full matrix)
+  subroutine squareRootOverlap(over, sSqrRoot)
     real(dp), intent(in) :: over(:,:)
-    real(dp), intent(in) :: eigenVec(:,:,:)
-    real(dp), intent(out) :: orthoEigenVec(:,:,:)
+    real(dp), intent(out) :: sSqrRoot(:,:)
 
-    real(dp), allocatable :: sSqr(:,:), sp(:), aux(:), w(:), z(:,:)
+    real(dp), allocatable :: sp(:), aux(:), w(:), z(:,:)
     real(dp), allocatable :: sTmp(:,:)
-    integer :: ii, jj, kk, nDim, info, mm, nn, iSpin, nSpin 
+    integer :: ii, jj, kk, nDim, info, mm, nn
 
     nDim = size(over, dim=1)
-    nSpin = size(eigenVec, dim=3)
 
-    allocate(sSqr(nDim, nDim))
     allocate(sTmp(nDim, nDim))
     allocate(sp(nDim*nDim))
     allocate(z(nDim, nDim))
@@ -1309,205 +1314,29 @@ contains
       call error('Overlap not positive semi-definite in orthoMolOrb.')
     end if
     
-    sSqr(:,:) = 0.0_dp
+    sSqrRoot(:,:) = 0.0_dp
     do ii = 1, nDim 
       do nn = 1, nDim 
         do mm = 1, nn
-          sSqr(mm,nn)  = sSqr(mm,nn)  + z(mm,ii) * dsqrt(w(ii)) * z(nn,ii)
+          sSqrRoot(mm,nn)  = sSqrRoot(mm,nn)  + z(mm,ii) * dsqrt(w(ii)) * z(nn,ii)
         end do
       end do
     end do
 
     do nn = 1, nDim 
       do mm = 1, nn-1
-        sSqr(nn,mm)  = sSqr(mm,nn) 
+        sSqrRoot(nn,mm)  = sSqrRoot(mm,nn) 
       end do
     end do
 
+  end subroutine squareRootOverlap
 
-    do iSpin = 1, nSpin
-      call symm(orthoEigenVec(:,:,iSpin), "L", sSqr, eigenVec(:,:,iSpin))
-    end do
-
-  end subroutine orthoMolOrb
-
-  subroutine overlapSlaterDeterminant(iSpin, nocc_ud, ii, aa, jj, bb, orthoVecA, orthoVecB, det)
-    integer, intent(in) :: iSpin, nocc_ud(:), ii, aa, jj, bb 
-    real(dp), intent(in) :: orthoVecA(:,:,:), orthoVecB(:,:,:) 
-    real(dp), intent(out) :: det
-
-    real(dp), allocatable :: slaterDet(:,:), iPiv(:)
-    integer :: nDim, nOcc, pp, qq, ipp, iqq, info
-
-    nOcc = nocc_ud(iSpin)
-    allocate(slaterDet(nOcc, nOcc))
-    allocate(iPiv(nOcc))
-
-    nDim = size(orthoVecA, dim=1)
-    ipp = 0
-    do pp = 1, nDim
-      if (pp == ii .or. (pp > nOcc .and. pp /= aa)) cycle
-      ipp = ipp + 1
-      iqq = 0
-      do qq = 1, nDim
-        if (qq == jj .or. (qq > nOcc .and. qq /= bb)) cycle
-        iqq = iqq + 1
-        slaterDet(ipp,iqq) = dot_product(orthoVecA(:,pp,iSpin), orthoVecB(:,qq,iSpin))
-      end do
-    end do
-
-    call dgetrf(nOcc, nOcc, slaterDet, nOcc, iPiv, info)
-    if (info /= 0) then
-      call error('SlaterDeterminant: dgetrf returned non-zero exit.')
-    end if 
+  !! Follow a given excited state through a geometry relaxation. This is done by 
+  !! projecting the transition orbitals which have been orthonormalized.  
+  subroutine followState(nSpin, iActiveState, nxov_rd, &
+             & nocc_ud, wij, win, getia, iatrans, omega, osz, over, newEvec, grndEigVecs,&
+             & filling, oldOrthoTO, oldTransOcc, sSqrRoot)
     
-    det = 1.0_dp
-    do pp = 1, nOcc
-      if (iPiv(pp) /= pp) then
-        det = - det * slaterDet(pp,pp)
-      else 
-        det =   det * slaterDet(pp,pp)
-     end if
-    end do
-
-  end subroutine overlapSlaterDeterminant
-
-  subroutine overlapCI(overlapTresholdCI, tOverlapOnlyFromCI, nSpin, iActiveState, nxov_rd, &
-             & nocc_ud, wij, win, getia, eval, osz, oldEvec, newEvec, oldOrthoMO, newOrthoMO)
-
-    real(dp), intent(in) :: overlapTresholdCI
-    logical, intent(in) :: tOverlapOnlyFromCI
-    integer, intent(in) :: nSpin
-    integer, intent(inout) :: iActiveState
-    integer, intent(in) :: nxov_rd
-    integer, intent(in) :: nocc_ud(:)
-    real(dp), intent(in) :: wij(:)
-    integer, intent(in) :: win(:)
-    integer, intent(in) :: getia(:,:)  
-    real(dp), intent(in) :: eval(:)
-    real(dp), intent(in) :: osz(:)
-    real(dp), intent(inout) :: oldEvec(:)
-    real(dp), intent(in) :: newEvec(:,:)
-    real(dp), intent(inout) :: oldOrthoMO(:,:,:)
-    real(dp), intent(in) :: newOrthoMO(:,:,:)
-
-    real(dp), allocatable :: pro(:), proMO(:)
-    integer, allocatable :: iPro(:)
-    real(dp) :: det,goo, dot
-    integer, allocatable :: iSign(:,:) 
-    integer :: iState, ias, ii, aa, ss, jbt, jj, bb, tt
-    integer :: iStateMin, iStateMax, iOrb, jOrb, nOrb, iSpin
-    integer :: iOldActiveState
-    integer, parameter :: iWindow = 2
-    real(dp), parameter :: treshSim = 0.8_dp
-
-    nOrb = size(oldOrthoMO, dim=1)
-    allocate(pro(2*iWindow + 1))
-    allocate(iPro(2*iWindow + 1))
-    allocate(iSign(nOrb, nSpin))
-    allocate(proMO(nOrb))
-    iOldActiveState = iActiveState
-
-    if (iActiveState - iWindow  < 1) then
-       iStateMin = 1
-    else
-       iStateMin = iActiveState - iWindow 
-    end if
-    iStateMax = iActiveState + iWindow
-    
-    do iState = iStateMin, iStateMax
-      iPro(iState-iStateMin+1) = iState
-    end do
-
-    write(*,*)
-    write(*,'(A15,2x,5(2x,i6))')   'States:        ',(iPro(iState-iStateMin+1), iState= iStateMin, iStateMax)
-    write(*,'(A15,2x,5(2x,f6.3))') 'Exc. ene. (eV):',(sqrt(eval(iState)) * Hartree__eV, &
-      & iState = iStateMin, iStateMax)
-    write(*,'(A15,2x,5(2x,f6.3))') 'Osc. strength: ',(osz(iState), iState = iStateMin, iStateMax)
-    
-!!$    write(*,'(A15,2x,10(2x,f6.3))') 'Olde Evec:     ',(oldEvec(ii), ii = 1, 10)
-!!$    write(*,'(A15,2x,10(2x,f6.3))') 'New 1:         ',(newEvec(ii,1), ii = 1, 10)
-!!$    write(*,'(A15,2x,10(2x,f6.3))') 'New 2:         ',(newEvec(ii,2), ii = 1, 10)
-!!$ 
-!!$    do iSpin = 1, nSpin
-!!$      do iOrb = 1, nOrb
-!!$        do jOrb = 1, nOrb
-!!$          proMO(jOrb) = dot_product(newOrthoMO(:,jOrb,iSpin), oldOrthoMO(:,iOrb,iSpin))
-!!$        end do
-!!$        if (maxval(abs(proMO)) < treshSim) then
-!!$          write(*,*) 'WARNING: MO between different steps too dissimilar, better reduce StepSize!'
-!!$        end if 
-!!$        if (minval(proMO) == - maxval(abs(proMO))) then
-!!$          iSign(iOrb,iSpin) = -1
-!!$        else
-!!$          iSign(iOrb,iSpin) =  1
-!!$        end if
-!!$        oldOrthoMO(:,iOrb,iSpin) = iSign(iOrb,iSpin) * oldOrthoMO(:,iOrb,iSpin)
-!!$      end do
-!!$    end do
-!!$
-!!$!!    do ias = 1, 10
-!!$!!      call indxov(win, ias, getia, ii, aa, ss)
-!!$!!      print *,'ias', ias, ii, iSign(ii,ss), aa, iSign(aa,ss), 'fin: ',iSign(ii,ss)*iSign(aa,ss)
-!!$!!    enddo
-!!$    do ias = 1, nxov_rd
-!!$      call indxov(win, ias, getia, ii, aa, ss)
-!!$      if (iSign(ii,ss) * iSign(aa,ss) == -1) then
-!!$        oldEvec(ias) = - oldEvec(ias)
-!!$      end if
-!!$    end do
-!!$
-!!$    write(*,'(A15,2x,10(2x,f6.3))') 'Mod  Evec:     ',(oldEvec(ii), ii = 1, 10)
-!!$
-!!$    pro = 0.0_dp
-!!$    if (tOverlapOnlyFromCI) then
-!!$      do iState = iStateMin, iStateMax
-!!$        pro(iState-iStateMin+1) = dot_product(newEvec(:,iState),oldEvec(:))
-!!$      end do
-!!$    else 
-!!$      do iState = iStateMin, iStateMax
-!!$        do ias = 1, nxov_rd
-!!$          if (abs(newEvec(ias,iState)) < overlapTresholdCI) cycle
-!!$          call indxov(win, ias, getia, ii, aa, ss)
-!!$          do jbt = 1, nxov_rd
-!!$            if (abs(oldEvec(jbt)) < overlapTresholdCI) cycle
-!!$            call indxov(win, jbt, getia, jj, bb, tt)
-!!$            if (ss /= tt) cycle
-!!$            call overlapSlaterDeterminant(ss, nocc_ud, ii, aa, jj, bb, newOrthoMO, oldOrthoMO, det)
-!!$            pro(iState-iStateMin+1) = pro(iState-iStateMin+1) + det * newEvec(ias,iState) *&
-!!$              & oldEvec(jbt)
-!!$          end do
-!!$        end do
-!!$      end do
-!!$    end if
-!!$    
-    pro(:) = abs(pro)
-
-    write(*,'(A15,2x,5(2x,f6.3))') 'Overlap:       ',(pro(iState-iStateMin+1), &
-       & iState = iStateMin, iStateMax)
-
-    do iState = iStateMin, iStateMax 
-      if (abs(pro(iState-iStateMin+1) - maxval(pro)) < epsilon(1.0_rsp)) then
-        if(iActiveState /= iState) then
-           write(*,'(1x,A33,1x,i4,A5,1x,i4)') '-> Active state was changed from ', iOldActiveState,&
-             & ' to: ', iState
-           if (abs(iActiveState - iState) > 1) then
-             write(*,*) ' WARNING: Skip by more than one state, better reduce StepSize!'
-           end if        
-        endif
-        iActiveState = iState
-        exit
-      end if
-    end do
-        
-  end subroutine overlapCI
-
-  subroutine followState(overlapTresholdCI, tOverlapOnlyFromCI, nSpin, iActiveState, nxov_rd, &
-             & nocc_ud, wij, win, getia, iatrans, omega, osz, over, oldEvec, newEvec, grndEigVecs,&
-             & filling, oldOrthoMO, oldOcc)
-    
-    real(dp), intent(in) :: overlapTresholdCI
-    logical, intent(in) :: tOverlapOnlyFromCI
     integer, intent(in) :: nSpin
     integer, intent(inout) :: iActiveState
     integer, intent(in) :: nxov_rd
@@ -1519,37 +1348,42 @@ contains
     real(dp), intent(in) :: omega(:)
     real(dp), intent(in) :: osz(:)
     real(dp), intent(in) :: over(:,:)
-    real(dp), intent(inout) :: oldEvec(:)
     real(dp), intent(in) :: newEvec(:,:)
     real(dp), intent(in) :: grndEigVecs(:,:,:)
     real(dp), intent(in) :: filling(:,:)
-    real(dp), intent(inout) :: oldOrthoMO(:,:,:)
-    real(dp), intent(inout) :: oldOcc(:,:)
+    real(dp), intent(inout) :: oldOrthoTO(:,:,:)
+    real(dp), intent(inout) :: oldTransOcc(:,:)
+    real(dp), intent(in) :: sSqrRoot(:,:)
 
-    real(dp), allocatable :: newOrthoMO(:,:,:)
-    real(dp), allocatable :: newOcc(:,:), t(:,:,:)
-    integer :: nOrb,i, iMin, iOrb, iSpin, ii, jOrb, aa, ias, ss
+    real(dp), allocatable :: newOrthoTO(:,:,:)
+    real(dp), allocatable :: newTransOcc(:,:), t(:,:,:)
+    integer :: nOrb, iOrb, iSpin, jOrb, nExc
     integer, parameter :: iWindow = 2
-    integer :: iStateMin, iStateMax, iState, iOldActiveState
-    real(dp) :: sumVal, jool
-    real(dp), allocatable :: pro(:), oMO(:,:,:)
+    real(dp), parameter :: treshOcc = 1.d-4
+    integer :: iStateMin, iStateMax, iState, iOldActiveState, iOpt(1)
+    real(dp) :: sumVal
+    real(dp), allocatable :: pro(:)
     integer, allocatable :: iPro(:)
 
     nOrb = size(grndEigVecs, dim=1)
-    allocate(newOrthoMO(nOrb, nOrb, nSpin))
-    allocate(newOcc(nOrb, nSpin))
-    allocate(oMO(nOrb, nOrb, nSpin))
+    nExc = size(osz, dim=1)
+    allocate(newOrthoTO(nOrb, nOrb, nSpin))
+    allocate(newTransOcc(nOrb, nSpin))
     allocate(t(nOrb, nOrb, nSpin))
     allocate(pro(2*iWindow + 1))
     allocate(iPro(2*iWindow + 1))
     iOldActiveState = iActiveState
 
+    ! Define a window of states around active one to find relevant state
     if (iActiveState - iWindow  < 1) then
        iStateMin = 1
     else
        iStateMin = iActiveState - iWindow 
     end if
     iStateMax = iActiveState + iWindow
+    if (iStateMax > nExc) then
+      call error("Increase number of states to solve for.")
+    end if 
 
     do iState = iStateMin, iStateMax
       iPro(iState-iStateMin+1) = iState
@@ -1560,84 +1394,63 @@ contains
     write(*,'(A15,2x,5(2x,f6.3))') 'Exc. ene. (eV):',(sqrt(omega(iState)) * Hartree__eV, &
       & iState = iStateMin, iStateMax)
     write(*,'(A15,2x,5(2x,f6.3))') 'Osc. strength: ',(osz(iState), iState = iStateMin, iStateMax)
-    write(*,'(A15,2x,10(2x,f6.3))') 'Olde Evec:     ',(oldEvec(ii), ii = 1, 10)
-    write(*,'(A15,2x,10(2x,f6.3))') 'New 1:         ',(newEvec(ii,1), ii = 1, 10)
-    write(*,'(A15,2x,10(2x,f6.3))') 'New 2:         ',(newEvec(ii,2), ii = 1, 10)
-    write(*,'(A15,2x,10(2x,f6.3))') 'New 3:         ',(newEvec(ii,3), ii = 1, 10)
-    write(*,'(A15,2x,10(2x,f6.3))') 'New 4:         ',(newEvec(ii,4), ii = 1, 10)
-    do ias = 1, 10
-       call indxov(win, ias, getia, ii, aa, ss)
-       print *,'ias', ias, ii, aa
-    enddo
-    newOrthoMO = 0.0_dp
-    newOcc = 0.0_dp
+
+    newOrthoTO = 0.0_dp
+    newTransOcc = 0.0_dp
     pro(:) = 0.0_dp
+
     do iState = iStateMin, iStateMax 
-      !!print *,'iState:',iState
+
+      ! Build and diagonalize T to get transition orbitals in MO space, then build 
+      ! transition orbitals from eigenvectors and ground state MO, finally orthonormalize 
       call buildExcDnsMat(nxov_rd, nocc_ud, win, wij, getia, iatrans, newEvec(:,iState),&
            & filling, sqrt(omega(iState)), t)
+
       do iSpin = 1, nSpin
-        call evalCoeffsCopy(t(:,:,iSpin), newOcc(:,iSpin), grndEigVecs(:,:,iSpin))
+        call evalCoeffs(t(:,:,iSpin), newTransOcc(:,iSpin), grndEigVecs(:,:,iSpin))
+        call symm(newOrthoTO(:,:,iSpin), "L", sSqrRoot, t(:,:,iSpin))
       end do
-      call orthoMolOrb(over, t, newOrthoMO)
-      call orthoMolOrb(over, grndEigVecs, oMO)
 
-      print *,'State',iState
-      do iOrb = 1, nOrb
-         jool = dot_product(newOrthoMO(:,1,1), oMO(:,iOrb,1))
-         if(abs(jool) > 0.3) then
-            write(*,'(A,2x,i2,2x,f10.6)') 'hole:',iOrb, jool
-         end if
-      enddo
-      do iOrb = 1, nOrb
-         jool = dot_product(newOrthoMO(:,nOrb,1), oMO(:,iOrb,1))
-         if(abs(jool) > 0.3) then
-            write(*,'(A,2x,i2,2x,f10.6)') 'elec:',iOrb, jool
-         end if
-      enddo
-
+      ! Overlap criterion based on DOI: 10.1002/jcc.25800, accounts for random phase of MO
+      ! The occupations are negative (hole) and positive (electon) 
       sumVal = 0.0_dp
       do iSpin = 1, nSpin
         do iOrb = 1, nOrb
-           sumVal = sumVal + abs(dot_product(newOrthoMO(:,iOrb,iSpin), oldOrthoMO(:,iOrb,iSpin))) * &
-                    & abs(oldOcc(iOrb,iSpin))
+           if (abs(oldTransOcc(iOrb,iSpin)) < treshOcc) cycle
+           sumVal = sumVal + abs(dot_product(newOrthoTO(:,iOrb,iSpin), oldOrthoTO(:,iOrb,iSpin))) &
+                    & * abs(oldTransOcc(iOrb,iSpin))
         end do
       end do
-      !!pro(iState-iStateMin+1) = abs(sumVal) / sum(oldOcc)
-      pro(iState-iStateMin+1) = abs(sumVal) /sum(abs(oldOcc))
+      ! Should be normalized to one for perfect match
+      pro(iState-iStateMin+1) = abs(sumVal) /sum(abs(oldTransOcc))
+
     enddo
 
     write(*,'(A15,2x,5(2x,f6.3))') 'Overlap:       ',(pro(iState-iStateMin+1), &
        & iState = iStateMin, iStateMax)
 
-    do iState = iStateMin, iStateMax 
-      if (abs(pro(iState-iStateMin+1) - maxval(pro)) < epsilon(1.0_rsp)) then
-        if(iActiveState /= iState) then
-           write(*,'(1x,A33,1x,i4,A5,1x,i4)') '-> Active state was changed from ', iOldActiveState,&
-             & ' to: ', iState
-           if (abs(iActiveState - iState) > 1) then
-             write(*,*) ' WARNING: Skip by more than one state, better reduce StepSize!'
-           end if        
-        endif
-        iActiveState = iState
-        exit
-      end if
-    end do    
+    iOpt = maxloc(pro)
+    if(iActiveState /= iOpt(1)) then
+       write(*,'(1x,A33,1x,i4,A5,1x,i4)') '-> Active state was changed from ', iOldActiveState,&
+            & ' to: ', iState
+       if (abs(iActiveState - iState) > 1) then
+          write(*,*) ' WARNING: Skip by more than one state, better reduce StepSize!'
+       end if
+    endif
+    iActiveState = iOpt(1)
+ 
 
-!!    call orthoMolOrb(over, grndEigVecs, newOrthoMO)
-
-!!    call overlapCI(overlapTresholdCI, tOverlapOnlyFromCI, nSpin, iActiveState, nxov_rd, nocc_ud,&
-!!         & wij, win, getia, omega, osz, oldEvec, newEvec, oldOrthoMO, newOrthoMO)
-    
+    ! Build TO a last time for new active state
     call buildExcDnsMat(nxov_rd, nocc_ud, win, wij, getia, iatrans, newEvec(:,iActiveState),&
            & filling, sqrt(omega(iActiveState)), t)
-    do iSpin = 1, nSpin
-      call evalCoeffsCopy(t(:,:,iSpin), newOcc(:,iSpin), grndEigVecs(:,:,iSpin))
-    end do   
-    call orthoMolOrb(over, t, newOrthoMO)
 
-    oldOcc = newOcc
-    oldOrthoMO = newOrthoMO 
+    do iSpin = 1, nSpin
+      call evalCoeffs(t(:,:,iSpin), newTransOcc(:,iSpin), grndEigVecs(:,:,iSpin))
+      call symm(newOrthoTO(:,:,iSpin), "L", sSqrRoot, t(:,:,iSpin))
+    end do
+
+    oldTransOcc = newTransOcc
+    oldOrthoTO = newOrthoTO 
 
   end subroutine followState
 
@@ -1668,11 +1481,6 @@ contains
     xmy(:) = evec(:) * sqrt(omega / wij(:))
 
     t(:,:,:) = 0.0_dp
-    do iSpin = 1, nSpin
-      do iOrb = 1, nOrb
-        !!  t(iOrb, iOrb, iSpin) = filling(iOrb, iSpin)
-      end do
-    end do
 
     do ias = 1, nxov
       call indxov(win, ias, getia, i, a, s)
@@ -1701,7 +1509,7 @@ contains
   end subroutine buildExcDnsMat
 
   !> Project MO density matrix onto ground state orbitals
-  subroutine evalCoeffsCopy(t2, occ, eig)
+  subroutine evalCoeffs(t2, occ, eig)
 
     !> density matrix
     real(dp), intent(inout) :: t2(:,:)
@@ -1720,5 +1528,6 @@ contains
     call gemm(coeffs, eig, t2)
     t2 = coeffs
 
-  end subroutine evalCoeffsCopy
+  end subroutine evalCoeffs
+
 end module dftbp_linrespcommon
