@@ -1359,11 +1359,22 @@ contains
     real(dp), allocatable :: newTransOcc(:,:), t(:,:,:)
     integer :: nOrb, iOrb, iSpin, jOrb, nExc
     integer, parameter :: iWindow = 2
-    real(dp), parameter :: treshOcc = 1.d-4
-    integer :: iStateMin, iStateMax, iState, iOldActiveState, iOpt(1)
-    real(dp) :: sumVal
-    real(dp), allocatable :: pro(:)
+    real(dp), parameter :: treshOcc = 1.d-8
+    real(dp), parameter :: proCrit = 0.05_dp
+    integer :: iStateMin, iStateMax, iState, iOldActiveState, iOpt, iNextOpt
+    integer :: iLoc(1), iLoc1(1), iLoc2(1), iLoc3(1)
+    real(dp) :: sumVal, sumOcc, wvnorm
+    real(dp), allocatable :: pro(:), pTmp(:)
     integer, allocatable :: iPro(:)
+    integer :: ii,i1,i2,a1,a2,s,indo
+    real(dp), save :: oszOpt, wijOpt  
+    logical, save :: firstEntry = .true.
+    real(dp), allocatable :: wvec(:)
+    integer, allocatable :: wvin(:)
+
+
+    allocate(wvec(size(newEvec,dim=1)))
+    allocate(wvin(size(newEvec,dim=1)))
 
     nOrb = size(grndEigVecs, dim=1)
     nExc = size(osz, dim=1)
@@ -1371,6 +1382,7 @@ contains
     allocate(newTransOcc(nOrb, nSpin))
     allocate(t(nOrb, nOrb, nSpin))
     allocate(pro(2*iWindow + 1))
+    allocate(pTmp(2*iWindow + 1))
     allocate(iPro(2*iWindow + 1))
     iOldActiveState = iActiveState
 
@@ -1390,6 +1402,7 @@ contains
     end do
 
     write(*,*)
+    write(*,'(A,2x,i3)') 'Currently active state:  ', iActiveState
     write(*,'(A15,2x,5(2x,i6))')   'States:        ',(iPro(iState-iStateMin+1), iState= iStateMin, iStateMax)
     write(*,'(A15,2x,5(2x,f6.3))') 'Exc. ene. (eV):',(sqrt(omega(iState)) * Hartree__eV, &
       & iState = iStateMin, iStateMax)
@@ -1401,46 +1414,110 @@ contains
 
     do iState = iStateMin, iStateMax 
 
-      ! Build and diagonalize T to get transition orbitals in MO space, then build 
+      ! Build and diagonalize difference density matrix to get transition orbitals in MO space, then build 
       ! transition orbitals from eigenvectors and ground state MO, finally orthonormalize 
       call buildExcDnsMat(nxov_rd, nocc_ud, win, wij, getia, iatrans, newEvec(:,iState),&
            & filling, sqrt(omega(iState)), t)
-
       do iSpin = 1, nSpin
         call evalCoeffs(t(:,:,iSpin), newTransOcc(:,iSpin), grndEigVecs(:,:,iSpin))
         call symm(newOrthoTO(:,:,iSpin), "L", sSqrRoot, t(:,:,iSpin))
       end do
 
       ! Overlap criterion based on DOI: 10.1002/jcc.25800, accounts for random phase of MO
-      ! The occupations are negative (hole) and positive (electon) 
+      ! Here we choose the second criterium but with eigenstates of the difference density matrix 
+      ! Note that eigenvalues can be negative (removed electron) and positive (added electron)
       sumVal = 0.0_dp
+      sumOcc = 0.0_dp
       do iSpin = 1, nSpin
         do iOrb = 1, nOrb
            if (abs(oldTransOcc(iOrb,iSpin)) < treshOcc) cycle
-           sumVal = sumVal + abs(dot_product(newOrthoTO(:,iOrb,iSpin), oldOrthoTO(:,iOrb,iSpin))) &
+           sumVal = sumVal + dot_product(abs(newOrthoTO(:,iOrb,iSpin)), abs(oldOrthoTO(:,iOrb,iSpin))) &
                     & * abs(oldTransOcc(iOrb,iSpin))
+           sumOcc =  sumOcc + abs(oldTransOcc(iOrb,iSpin))
         end do
       end do
       ! Should be normalized to one for perfect match
-      pro(iState-iStateMin+1) = abs(sumVal) /sum(abs(oldTransOcc))
+      pro(iState-iStateMin+1) = sumVal / sumOcc
 
     enddo
-
+    
     write(*,'(A15,2x,5(2x,f6.3))') 'Overlap:       ',(pro(iState-iStateMin+1), &
        & iState = iStateMin, iStateMax)
 
-    iOpt = maxloc(pro)
-    if(iActiveState /= iOpt(1)) then
+    wvec(:) = newEvec(:,1)
+    wvin(:) = 0
+    wvnorm = 1.0_dp / sqrt(sum(wvec**2))
+    wvec(:) = wvec * wvnorm
+    ! find largest coefficient in CI - should use maxloc
+    call index_heap_sort(wvin,wvec)
+    wvin = wvin(size(wvin):1:-1)
+    wvec = wvec(wvin)
+    print *,'State 1 comp'
+    do ii = 1, 5
+       indo = wvin(ii)
+       call indxov(win, indo, getia, i1, a1, s)
+       write(*,'(A15,2x,f10.6,2x,i3,2x,i3)') 'Weight       ', wvec(ii), i1, a1
+    enddo
+    wvec(:) = newEvec(:,2)
+    wvin(:) = 0
+    wvnorm = 1.0_dp / sqrt(sum(wvec**2))
+    wvec(:) = wvec * wvnorm
+    ! find largest coefficient in CI - should use maxloc
+    call index_heap_sort(wvin,wvec)
+    wvin = wvin(size(wvin):1:-1)
+    wvec = wvec(wvin)
+    print *,'State 2 comp'
+    do ii = 1, 5
+       indo = wvin(ii)
+       call indxov(win, indo, getia, i1, a1, s)
+       write(*,'(A15,2x,f10.6,2x,i3,2x,i3)') 'Weight       ', wvec(ii), i1, a1
+    enddo    
+
+    iLoc = maxloc(pro)
+    iOpt = iStateMin + iLoc(1) - 1
+    pTmp = pro
+    pTmp(iLoc(1)) = 0.0_dp
+    iLoc = maxloc(pTmp)
+    iNextOpt = iStateMin + iLoc(1) - 1
+
+!!$    if (.not. firstEntry) then
+    if (pro(iOpt-iStateMin+1)-pro(iNextOpt-iStateMin+1) < proCrit) then
+      write(*,*) 'Error: Overlap too close to perform state switch.'
+      stop 
+!!$        print *,'Too close to call in pro'
+!!$        stop 
+!!$ !!       if (abs(osz(iNextOpt)-oszOpt) <  abs(osz(iOpt)-oszOpt)) then
+!!$        iLoc2 = maxloc(newEvec(:,iOpt))
+!!$        iLoc3 = maxloc(newEvec(:,iNextOpt))
+!!$        if (abs(wij(iLoc2(1))-wij(iLoc3(1))) < 0.0001_dp) then
+!!$           print *,'Too close to call'
+!!$           stop
+!!$        end if
+!!$        if (abs(wij(iLoc2(1))-wijOpt) <  abs(wij(iLoc3(1))-wijOpt)) then
+!!$          print *,'Did some stuff'
+!!$          iOpt = iNextOpt
+!!$        end if
+!!$      end if
+    end if
+
+    iLoc2 = maxloc(newEvec(:,1))
+    call indxov(win, iLoc2(1), getia, i1, a1, s)
+    iLoc3 = maxloc(newEvec(:,2))
+    call indxov(win, iLoc3(1), getia, i2, a2, s)
+    write(*,'(A15,2x,i3,2x,i3,2x,f10.6)') 'State 1 MO',i1, a1, wij(iLoc2(1))*13.6_dp
+    write(*,'(A15,2x,i3,2x,i3,2x,f10.6)') 'State 2 MO',i2, a2, wij(iLoc3(1))*13.6_dp
+
+    if(iActiveState /= iOpt) then
        write(*,'(1x,A33,1x,i4,A5,1x,i4)') '-> Active state was changed from ', iOldActiveState,&
-            & ' to: ', iState
-       if (abs(iActiveState - iState) > 1) then
+            & ' to: ', iOpt
+       if (abs(iActiveState - iOpt) > 1) then
           write(*,*) ' WARNING: Skip by more than one state, better reduce StepSize!'
        end if
     endif
-    iActiveState = iOpt(1)
+    iActiveState = iOpt
  
 
-    ! Build TO a last time for new active state
+    ! Build diff density a last time for new active state
     call buildExcDnsMat(nxov_rd, nocc_ud, win, wij, getia, iatrans, newEvec(:,iActiveState),&
            & filling, sqrt(omega(iActiveState)), t)
 
@@ -1450,10 +1527,17 @@ contains
     end do
 
     oldTransOcc = newTransOcc
-    oldOrthoTO = newOrthoTO 
+    oldOrthoTO = newOrthoTO
+    oszOpt = osz(iActiveState)
+    iLoc = maxloc(newEvec(:,iActiveState))
+    wijOpt = wij(iLoc(1))
+    if (firstEntry) then
+      firstEntry = .false.
+    end if
 
   end subroutine followState
 
+  !! This builds the difference density matrix T in Furche JCP 117 7433
   subroutine buildExcDnsMat(nxov, homo, win, wij, getia, iatrans, evec, filling, omega, t) 
 
     integer, intent(in) :: nxov
@@ -1468,7 +1552,7 @@ contains
     real(dp), intent(inout) :: t(:,:,:)
     integer :: ias, ibs, jas, i, a, s, b, ab, ij, j, iSpin, nSpin
     integer :: iOrb, nOrb
-    real(dp) :: tmp1, tmp2
+    real(dp) :: tmp1
     real(dp), allocatable  :: xpy(:), xmy(:)
 
     nOrb = size(filling, dim = 1)
@@ -1488,7 +1572,6 @@ contains
         ibs = iatrans(i, b, s)
         call rindxvv(homo(s), a, b, ab)
         tmp1 = xpy(ias) * xpy(ibs) + xmy(ias) * xmy(ibs)
-        tmp2 = omega * (xpy(ias) * xmy(ibs)+ xmy(ias) * xpy(ibs))
         t(a,b,s) = t(a,b,s) + 0.5_dp * tmp1
         if (a /= b) then
           t(b,a,s) = t(b,a,s) + 0.5_dp * tmp1
@@ -1498,7 +1581,6 @@ contains
         jas = iatrans(j,a,s)
         call rindxvv(0, j, i, ij)
         tmp1 = xpy(ias) * xpy(jas) + xmy(ias) * xmy(jas)
-        tmp2 = omega * (xpy(ias) * xmy(jas) + xmy(ias) * xpy(jas))
         t(i,j,s) = t(i,j,s) - 0.5_dp * tmp1
         if (i /= j) then
           t(j,i,s) = t(j,i,s) - 0.5_dp * tmp1
@@ -1508,7 +1590,8 @@ contains
 
   end subroutine buildExcDnsMat
 
-  !> Project MO density matrix onto ground state orbitals
+  !> We have T v_i = lambda_i v_i 
+  !> Computes b(m,i) = sum_j c(m,j) * v(j,i), with c the ground state MO  
   subroutine evalCoeffs(t2, occ, eig)
 
     !> density matrix
