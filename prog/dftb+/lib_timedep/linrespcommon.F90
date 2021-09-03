@@ -1362,19 +1362,10 @@ contains
     real(dp), parameter :: treshOcc = 1.d-8
     real(dp), parameter :: proCrit = 0.05_dp
     integer :: iStateMin, iStateMax, iState, iOldActiveState, iOpt, iNextOpt
-    integer :: iLoc(1), iLoc1(1), iLoc2(1), iLoc3(1)
-    real(dp) :: sumVal, sumOcc, wvnorm
+    integer :: iLoc(1)
+    real(dp) :: sumVal, sumOcc
     real(dp), allocatable :: pro(:), pTmp(:)
     integer, allocatable :: iPro(:)
-    integer :: ii,i1,i2,a1,a2,s,indo
-    real(dp), save :: oszOpt, wijOpt  
-    logical, save :: firstEntry = .true.
-    real(dp), allocatable :: wvec(:)
-    integer, allocatable :: wvin(:)
-
-
-    allocate(wvec(size(newEvec,dim=1)))
-    allocate(wvin(size(newEvec,dim=1)))
 
     nOrb = size(grndEigVecs, dim=1)
     nExc = size(osz, dim=1)
@@ -1444,35 +1435,7 @@ contains
     write(*,'(A15,2x,5(2x,f6.3))') 'Overlap:       ',(pro(iState-iStateMin+1), &
        & iState = iStateMin, iStateMax)
 
-    wvec(:) = newEvec(:,1)
-    wvin(:) = 0
-    wvnorm = 1.0_dp / sqrt(sum(wvec**2))
-    wvec(:) = wvec * wvnorm
-    ! find largest coefficient in CI - should use maxloc
-    call index_heap_sort(wvin,wvec)
-    wvin = wvin(size(wvin):1:-1)
-    wvec = wvec(wvin)
-    print *,'State 1 comp'
-    do ii = 1, 5
-       indo = wvin(ii)
-       call indxov(win, indo, getia, i1, a1, s)
-       write(*,'(A15,2x,f10.6,2x,i3,2x,i3)') 'Weight       ', wvec(ii), i1, a1
-    enddo
-    wvec(:) = newEvec(:,2)
-    wvin(:) = 0
-    wvnorm = 1.0_dp / sqrt(sum(wvec**2))
-    wvec(:) = wvec * wvnorm
-    ! find largest coefficient in CI - should use maxloc
-    call index_heap_sort(wvin,wvec)
-    wvin = wvin(size(wvin):1:-1)
-    wvec = wvec(wvin)
-    print *,'State 2 comp'
-    do ii = 1, 5
-       indo = wvin(ii)
-       call indxov(win, indo, getia, i1, a1, s)
-       write(*,'(A15,2x,f10.6,2x,i3,2x,i3)') 'Weight       ', wvec(ii), i1, a1
-    enddo    
-
+    ! Determine state with maximum overlap and next smaller overlap
     iLoc = maxloc(pro)
     iOpt = iStateMin + iLoc(1) - 1
     pTmp = pro
@@ -1480,32 +1443,11 @@ contains
     iLoc = maxloc(pTmp)
     iNextOpt = iStateMin + iLoc(1) - 1
 
-!!$    if (.not. firstEntry) then
+    ! If overlaps are too close no decision is possible 
     if (pro(iOpt-iStateMin+1)-pro(iNextOpt-iStateMin+1) < proCrit) then
       write(*,*) 'Error: Overlap too close to perform state switch.'
       stop 
-!!$        print *,'Too close to call in pro'
-!!$        stop 
-!!$ !!       if (abs(osz(iNextOpt)-oszOpt) <  abs(osz(iOpt)-oszOpt)) then
-!!$        iLoc2 = maxloc(newEvec(:,iOpt))
-!!$        iLoc3 = maxloc(newEvec(:,iNextOpt))
-!!$        if (abs(wij(iLoc2(1))-wij(iLoc3(1))) < 0.0001_dp) then
-!!$           print *,'Too close to call'
-!!$           stop
-!!$        end if
-!!$        if (abs(wij(iLoc2(1))-wijOpt) <  abs(wij(iLoc3(1))-wijOpt)) then
-!!$          print *,'Did some stuff'
-!!$          iOpt = iNextOpt
-!!$        end if
-!!$      end if
     end if
-
-    iLoc2 = maxloc(newEvec(:,1))
-    call indxov(win, iLoc2(1), getia, i1, a1, s)
-    iLoc3 = maxloc(newEvec(:,2))
-    call indxov(win, iLoc3(1), getia, i2, a2, s)
-    write(*,'(A15,2x,i3,2x,i3,2x,f10.6)') 'State 1 MO',i1, a1, wij(iLoc2(1))*13.6_dp
-    write(*,'(A15,2x,i3,2x,i3,2x,f10.6)') 'State 2 MO',i2, a2, wij(iLoc3(1))*13.6_dp
 
     if(iActiveState /= iOpt) then
        write(*,'(1x,A33,1x,i4,A5,1x,i4)') '-> Active state was changed from ', iOldActiveState,&
@@ -1516,7 +1458,6 @@ contains
     endif
     iActiveState = iOpt
  
-
     ! Build diff density a last time for new active state
     call buildExcDnsMat(nxov_rd, nocc_ud, win, wij, getia, iatrans, newEvec(:,iActiveState),&
            & filling, sqrt(omega(iActiveState)), t)
@@ -1528,13 +1469,7 @@ contains
 
     oldTransOcc = newTransOcc
     oldOrthoTO = newOrthoTO
-    oszOpt = osz(iActiveState)
-    iLoc = maxloc(newEvec(:,iActiveState))
-    wijOpt = wij(iLoc(1))
-    if (firstEntry) then
-      firstEntry = .false.
-    end if
-
+ 
   end subroutine followState
 
   !! This builds the difference density matrix T in Furche JCP 117 7433
