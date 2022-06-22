@@ -1245,6 +1245,10 @@ contains
 
     call env%globalTimer%startTimer(globalTimers%postSCC)
 
+    call berryPhase(this%denseDesc, this%ints, this%kPoint, this%neighbourList, this%nNeighbourSK, &
+         & this%iSparseStart, this%img2CentCell, this%iCellVec, this%cellVec, this%eigvecsCplx,    &
+         & this%filling)
+
     if (this%isLinResp) then
       call calculateLinRespExcitations(env, this%linearResponse, this%parallelKS, this%scc,&
           & this%qOutput, this%q0, this%ints, this%eigvecsReal, this%eigen(:,1,:),&
@@ -7473,4 +7477,177 @@ contains
 
   end subroutine assignDipoleMoment
 
+  subroutine berryPhase(denseDesc, ints, kPoint, neighbourList, nNeighbourSK, iSparseStart, &
+       & img2CentCell, iCellVec, cellVec, eigvecsCplx, filling)
+
+    !> Dense matrix descriptor
+    type(TDenseDescr), intent(in) :: denseDesc
+
+    !> Integral container
+    type(TIntegral), intent(in) :: ints
+
+    !> k-points
+    real(dp), intent(in) :: kPoint(:,:)
+
+   !> list of neighbours for each atom
+    type(TNeighbourList), intent(in) :: neighbourList
+
+    !> Number of neighbours for each of the atoms
+    integer, intent(in) :: nNeighbourSK(:)
+
+    !> Index array for the start of atomic blocks in sparse arrays
+    integer, intent(in) :: iSparseStart(:,:)
+
+    !> map from image atoms to the original unique atom
+    integer, intent(in) :: img2CentCell(:)
+
+    !> Index for which unit cell atoms are associated with
+    integer, intent(in) :: iCellVec(:)
+
+    !> Vectors (in units of the lattice constants) to cells of the lattice
+    real(dp), intent(in) :: cellVec(:,:)
+
+    !> Complex eigenvectors
+    complex(dp), intent(in) :: eigvecsCplx(:,:,:)
+
+    ! KS state occupations
+    real(dp), intent(in) :: filling(:,:,:)
+
+    complex(dp), allocatable :: SSqr(:,:)
+    complex(dp), allocatable :: SC(:,:), SCvec(:), slaterDet(:,:)
+    complex(dp) :: res, prodSlater, prodKS, det
+    real(dp) :: delK(3), berry
+    integer, allocatable :: iPiv(:)
+    integer :: iK, nDim, iKS, jKS, nK, iKn, ii, jj
+    integer :: nSpin, nHOB, info, iTarget
+
+    nDim = size(eigvecsCplx,dim=1)
+    nK = size(kPoint,dim=2)
+    nSpin = size(filling, dim=3)
+    if(nSpin == 2) then
+      call error('Berry phase computation only available for spin-unpolarized systems.')
+    endif
+    allocate(SSqr(nDim,nDim))
+    allocate(SC(nDim,nDim))
+    allocate(SCvec(nDim))
+     
+    do iKS = nDim, 1, -1
+      if(filling(iKS,1,1) > 1.0_dp) then
+        nHOB = iKS
+        exit
+      end if
+    end do
+    do iK = 2, nK
+      do iKS = nDim, 1, -1
+        if(filling(iKS,iK,1) > 1.0_dp) then
+          if(iKS == nHOB) then
+            exit
+          else
+            call error('Index of highest occupied band not unique along k-Path.')
+          end if
+        end if
+      end do
+    end do
+    iTarget = nHOB
+
+    write(*,*) 
+    write(*,'(a)') '--> Berry phase computation'
+    write(*,'(a,i4)') '--> Highest occupied band has index: ', nHOB
+   
+    allocate(slaterDet(nHOB,nHOB))
+    allocate(iPiv(nHOB))
+    prodKS = (1.0_dp, 0._dp)
+    prodSlater = (1.0_dp, 0._dp)
+    do iK = 1, nK
+      iKn = mod(iK, nK) + 1
+      delK = kPoint(:,iKn) - kPoint(:,iK)
+
+      call unpackHS(SSqr, ints%overlap, delK, neighbourList%iNeighbour, nNeighbourSK, &
+             & iCellVec, cellVec, denseDesc%iAtomStart, iSparseStart, img2CentCell)
+      do ii = 1, nDim
+        do jj = 1, ii
+          SSqr(jj,ii) = conjg(SSqr(ii,jj))
+        enddo
+      enddo
+
+      SC = matmul(SSqr,eigvecsCplx(:,:,iKn))
+
+      do iKS = 1, nHOB
+        do jKS = 1, nHOB
+          slaterDet(iKS,jKS) = dot_product(eigvecsCplx(:,iKS,iK), SC(:,jKS))
+          if(iKS /= jKS) then
+            !! slaterDet(jKS,iKS) = conjg(slaterDet(iKS,jKS))
+          end if
+        end do
+      end do
+
+      prodKS = prodKS * slaterDet(iTarget,iTarget) 
+
+      call zgetrf(nHOB, nHOB, slaterDet, nHOB, iPiv, info)
+      !!call zgetrf(1,1, slaterDet, 1, iPiv, info)
+
+      if (info /= 0) then
+         write(*,*) 'Error: SlaterDeterminant: zgetrf returned non-zero exit.', info
+         stop
+      endif
+
+      det = (1.0_dp, 0.0_dp)
+      do iKS = 1, nHOB
+        if (iPiv(iKS) /= iKS) then
+          det = - det * slaterDet(iKS,iKS)
+        else 
+          det =   det * slaterDet(iKS,iKS)
+        end if
+      end do
+      !!det = slaterDet(iKS,iKS)
+      prodSlater = prodSlater * det
+    end do
+    berry = -aimag(log(prodSlater))
+    write(*,'(a,f20.12)') '--> Berry phase of KS determinant along path:        ', berry
+    berry = -aimag(log(prodKS))
+    write(*,'(a,f20.12)') '--> Berry phase of highest occupied band along path: ', berry
+ 
+!!$    do iK = 1, size(kPoint,dim=2)
+!!$      write(*,'(2x,f10.6,2x,f10.6,2x,f10.6)') kPoint(1,iK),kPoint(2,iK),kPoint(3,iK)
+!!$  
+!!$      call unpackHS(SSqr, ints%overlap, kPoint(:,iK), neighbourList%iNeighbour, nNeighbourSK,&
+!!$            & iCellVec, cellVec, denseDesc%iAtomStart, iSparseStart, img2CentCell)
+!!$      do iKS = 1, size(eigvecsCplx,dim=2)
+!!$        do jKS = 1, iKS
+!!$           SSqr(jKS,iKS) = conjg(SSqr(iKS,jKS))
+!!$        enddo
+!!$      enddo
+!!$   
+!!$      SC = matmul(SSqr,eigvecsCplx(:,:,iK))
+!!$
+!!$      do iKS = 1, size(eigvecsCplx,dim=2)
+!!$         do jKS = iKS, size(eigvecsCplx,dim=2)
+!!$            !!res = dot_product(conjg(eigvecsCplx(:,iKS,iK)),SC(:,jKS))
+!!$            res = dot_product(eigvecsCplx(:,iKS,iK),SC(:,jKS))
+!!$            write(*,'(2x,i3,2x,i3,2x,f10.6,2x,f10.6,2x,f10.6)') iKS, jKS, real(res), aimag(res), abs(res)
+!!$         end do
+!!$      end do
+!!$    end do
+
+!!$    do iKS = 1, 4
+!!$      prod = (1.0_dp, 0._dp)
+!!$      do iK = 1, nK
+!!$        iKn = mod(iK, nK) + 1
+!!$        delK = kPoint(:,iKn) - kPoint(:,iK)
+!!$        call unpackHS(SSqr, ints%overlap, delK, neighbourList%iNeighbour, nNeighbourSK,&
+!!$             & iCellVec, cellVec, denseDesc%iAtomStart, iSparseStart, img2CentCell)
+!!$        do ii = 1, nDim
+!!$          do jj = 1, ii
+!!$            SSqr(jj,ii) = conjg(SSqr(ii,jj))
+!!$          enddo
+!!$        enddo
+!!$        SCvec = matmul(SSqr,eigvecsCplx(:,iKS,iKn))
+!!$        prod = prod * dot_product(eigvecsCplx(:,iKS,iK),SCvec)      
+!!$      end do
+!!$      berry = -aimag(log(prod))
+!!$      write(*,'(2x,a,i2,a,f10.6)') 'Berry phase band ', iKS, ': ', berry
+!!$    end do
+       
+
+  end subroutine berryPhase
 end module dftbp_dftbplus_main
