@@ -1235,6 +1235,10 @@ contains
       end if
     end if
 
+    call berryPhase(this%denseDesc, this%ints, this%kPoint, this%neighbourList, this%nNeighbourSK, &
+         & this%iSparseStart, this%img2CentCell, this%iCellVec, this%cellVec, this%eigvecsCplx,    &
+         & this%filling)
+
     if (this%tSccCalc .and. .not. this%isXlbomd .and. .not. tConverged&
         & .and. .not. this%tRestartNoSC) then
       call warning("SCC is NOT converged, maximal SCC iterations exceeded")
@@ -1244,10 +1248,6 @@ contains
     end if
 
     call env%globalTimer%startTimer(globalTimers%postSCC)
-
-    call berryPhase(this%denseDesc, this%ints, this%kPoint, this%neighbourList, this%nNeighbourSK, &
-         & this%iSparseStart, this%img2CentCell, this%iCellVec, this%cellVec, this%eigvecsCplx,    &
-         & this%filling)
 
     if (this%isLinResp) then
       call calculateLinRespExcitations(env, this%linearResponse, this%parallelKS, this%scc,&
@@ -7477,6 +7477,11 @@ contains
 
   end subroutine assignDipoleMoment
 
+  !> Computes Berry phase along closed loop defined by KLines
+  !> according to R. Resta, JPCM 12, R107 (2000)
+  !> Both the Berry phase for the full KS determinant as well as the highest occupied band 
+  !> are computed. Be aware of state crossings for this band. Routine performs no SVD. 
+  !> First and last point of k-Path should _not_ be the same
   subroutine berryPhase(denseDesc, ints, kPoint, neighbourList, nNeighbourSK, iSparseStart, &
        & img2CentCell, iCellVec, cellVec, eigvecsCplx, filling)
 
@@ -7514,8 +7519,8 @@ contains
     real(dp), intent(in) :: filling(:,:,:)
 
     complex(dp), allocatable :: SSqr(:,:)
-    complex(dp), allocatable :: SC(:,:), SCvec(:), slaterDet(:,:)
-    complex(dp) :: res, prodSlater, prodKS, det
+    complex(dp), allocatable :: SC(:,:), slaterDet(:,:)
+    complex(dp) :: prodSlater, prodKS, det
     real(dp) :: delK(3), berry
     integer, allocatable :: iPiv(:)
     integer :: iK, nDim, iKS, jKS, nK, iKn, ii, jj
@@ -7529,8 +7534,8 @@ contains
     endif
     allocate(SSqr(nDim,nDim))
     allocate(SC(nDim,nDim))
-    allocate(SCvec(nDim))
-     
+
+    !> Find highest occupied band (tresh 1.0 somewhat arbitrary)
     do iKS = nDim, 1, -1
       if(filling(iKS,1,1) > 1.0_dp) then
         nHOB = iKS
@@ -7572,19 +7577,20 @@ contains
 
       SC = matmul(SSqr,eigvecsCplx(:,:,iKn))
 
+      !> <psi_i(k)|psi_j(k')>
       do iKS = 1, nHOB
-        do jKS = 1, nHOB
+        do jKS = 1, iKS
           slaterDet(iKS,jKS) = dot_product(eigvecsCplx(:,iKS,iK), SC(:,jKS))
           if(iKS /= jKS) then
-            !! slaterDet(jKS,iKS) = conjg(slaterDet(iKS,jKS))
+            slaterDet(jKS,iKS) = conjg(slaterDet(iKS,jKS))
           end if
         end do
       end do
 
       prodKS = prodKS * slaterDet(iTarget,iTarget) 
 
+      !> det(<psi_i(k)|psi_j(k')>)
       call zgetrf(nHOB, nHOB, slaterDet, nHOB, iPiv, info)
-      !!call zgetrf(1,1, slaterDet, 1, iPiv, info)
 
       if (info /= 0) then
          write(*,*) 'Error: SlaterDeterminant: zgetrf returned non-zero exit.', info
@@ -7599,7 +7605,6 @@ contains
           det =   det * slaterDet(iKS,iKS)
         end if
       end do
-      !!det = slaterDet(iKS,iKS)
       prodSlater = prodSlater * det
     end do
     berry = -aimag(log(prodSlater))
@@ -7607,47 +7612,6 @@ contains
     berry = -aimag(log(prodKS))
     write(*,'(a,f20.12)') '--> Berry phase of highest occupied band along path: ', berry
  
-!!$    do iK = 1, size(kPoint,dim=2)
-!!$      write(*,'(2x,f10.6,2x,f10.6,2x,f10.6)') kPoint(1,iK),kPoint(2,iK),kPoint(3,iK)
-!!$  
-!!$      call unpackHS(SSqr, ints%overlap, kPoint(:,iK), neighbourList%iNeighbour, nNeighbourSK,&
-!!$            & iCellVec, cellVec, denseDesc%iAtomStart, iSparseStart, img2CentCell)
-!!$      do iKS = 1, size(eigvecsCplx,dim=2)
-!!$        do jKS = 1, iKS
-!!$           SSqr(jKS,iKS) = conjg(SSqr(iKS,jKS))
-!!$        enddo
-!!$      enddo
-!!$   
-!!$      SC = matmul(SSqr,eigvecsCplx(:,:,iK))
-!!$
-!!$      do iKS = 1, size(eigvecsCplx,dim=2)
-!!$         do jKS = iKS, size(eigvecsCplx,dim=2)
-!!$            !!res = dot_product(conjg(eigvecsCplx(:,iKS,iK)),SC(:,jKS))
-!!$            res = dot_product(eigvecsCplx(:,iKS,iK),SC(:,jKS))
-!!$            write(*,'(2x,i3,2x,i3,2x,f10.6,2x,f10.6,2x,f10.6)') iKS, jKS, real(res), aimag(res), abs(res)
-!!$         end do
-!!$      end do
-!!$    end do
-
-!!$    do iKS = 1, 4
-!!$      prod = (1.0_dp, 0._dp)
-!!$      do iK = 1, nK
-!!$        iKn = mod(iK, nK) + 1
-!!$        delK = kPoint(:,iKn) - kPoint(:,iK)
-!!$        call unpackHS(SSqr, ints%overlap, delK, neighbourList%iNeighbour, nNeighbourSK,&
-!!$             & iCellVec, cellVec, denseDesc%iAtomStart, iSparseStart, img2CentCell)
-!!$        do ii = 1, nDim
-!!$          do jj = 1, ii
-!!$            SSqr(jj,ii) = conjg(SSqr(ii,jj))
-!!$          enddo
-!!$        enddo
-!!$        SCvec = matmul(SSqr,eigvecsCplx(:,iKS,iKn))
-!!$        prod = prod * dot_product(eigvecsCplx(:,iKS,iK),SCvec)      
-!!$      end do
-!!$      berry = -aimag(log(prod))
-!!$      write(*,'(2x,a,i2,a,f10.6)') 'Berry phase band ', iKS, ': ', berry
-!!$    end do
-       
-
   end subroutine berryPhase
+
 end module dftbp_dftbplus_main
