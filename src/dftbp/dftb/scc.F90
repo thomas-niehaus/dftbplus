@@ -560,7 +560,8 @@ contains
   end subroutine getAtomicGammaMatrix
 
 #:if WITH_SCALAPACK
-  
+
+  !> Returns a local copy of the lower triange of the whole gamma matrix to each processor
   subroutine getAtomicGammaMatrixBlacs(this, gammamat, iNeighbour, img2CentCell, env)
 
     !> Instance
@@ -593,13 +594,15 @@ contains
         do iLoc = 1, size(this%coulomb%invRMat, dim=1)
           ii = scalafx_indxl2g(iLoc, this%coulomb%descInvRMat_(MB_), env%blacs%atomGrid%myrow,&
               & this%coulomb%descInvRMat_(RSRC_), env%blacs%atomGrid%nrow)
-          gammamat(ii,jj) = this%coulomb%invRMat(iLoc,jLoc)
+          if (ii >= jj) then
+            gammamat(ii,jj) = this%coulomb%invRMat(iLoc,jLoc)
+            call this%shortGamma%addAtomicMatrix(gammamat, iNeighbour, img2CentCell, ii, jj)
+          end if
         end do
       end do
     end if
-    ! Assemble and distribute to all processors in global grid
+    ! Assemble and distribute to all processors in the global grid
     call mpifx_allreduceip(env%mpi%globalComm, gammamat, MPI_SUM)
-    call this%shortGamma%addAtomicMatrix(gammamat, iNeighbour, img2CentCell)
 
   end subroutine getAtomicGammaMatrixBlacs
 
