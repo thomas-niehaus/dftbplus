@@ -471,7 +471,7 @@ contains
     integer, intent(in) :: getAB(:,:)
 
     !> Environment settings
-    type(TEnvironment), intent(in) :: env
+    type(TEnvironment), intent(inout) :: env
 
     !> Dense matrix descriptor
     type(TDenseDescr), intent(in) :: denseDesc 
@@ -774,7 +774,7 @@ contains
     integer, intent(in) :: getAB(:,:)
 
     !> Environment settings
-    type(TEnvironment), intent(in) :: env
+    type(TEnvironment), intent(inout) :: env
 
     !> Dense matrix descriptor
     type(TDenseDescr), intent(in) :: denseDesc 
@@ -1120,7 +1120,7 @@ contains
     integer, intent(in) :: getAB(:,:)
 
     !> Environment settings
-    type(TEnvironment), intent(in) :: env
+    type(TEnvironment), intent(inout) :: env
 
     !> Dense matrix descriptor
     type(TDenseDescr), intent(in) :: denseDesc
@@ -1281,7 +1281,7 @@ contains
     integer, intent(in) :: win(:)
 
     !> Environment settings
-    type(TEnvironment), intent(in) :: env
+    type(TEnvironment), intent(inout) :: env
 
     !> Dense matrix descriptor
     type(TDenseDescr), intent(in) :: denseDesc 
@@ -1483,7 +1483,7 @@ contains
       & ovrXev, grndEigVecs, ons_en, orb, vin, vout, indexOffSet)
 
     !> Environment settings
-    type(TEnvironment), intent(in) :: env
+    type(TEnvironment), intent(inout) :: env
     
     !> logical spin polarization
     logical, intent(in) :: spin
@@ -1801,7 +1801,7 @@ contains
     integer, intent(in) :: nmatup
 
     !> Environment settings
-    type(TEnvironment), intent(in) :: env
+    type(TEnvironment), intent(inout) :: env
 
     !> Dense matrix descriptor
     type(TDenseDescr), intent(in) :: denseDesc 
@@ -1994,7 +1994,7 @@ contains
     & filling, ovrXev, grndEigVecs)
 
     !> Environment settings
-    type(TEnvironment), intent(in) :: env
+    type(TEnvironment), intent(inout) :: env
 
     !> Dense matrix descriptor
     type(TDenseDescr), intent(in) :: denseDesc 
@@ -2536,7 +2536,7 @@ contains
   subroutine local2GlobalBlacsArray(env, denseDesc, locArray, glbArray)
 
     !> Environment settings
-    type(TEnvironment), intent(in) :: env
+    type(TEnvironment), intent(inout) :: env
 
     !> Dense matrix descriptor
     type(TDenseDescr), intent(in) :: denseDesc
