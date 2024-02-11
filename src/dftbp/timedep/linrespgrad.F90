@@ -41,12 +41,12 @@ module dftbp_timedep_linrespgrad
   use dftbp_common_environment, only : TEnvironment
   
 #:if WITH_SCALAPACK
-  
-  use dftbp_timedep_linrespcommon, only : actionAplusB_MPI, getExcSpin_MPI, local2GlobalBlacsArray, &
-      & localSizeCasidaVectors
+
+  use dftbp_timedep_linrespcommon, only : actionAplusB_MPI, getExcSpin_MPI, localSizeCasidaVectors
   use dftbp_extlibs_scalapackfx, only : pblasfx_psymm
   use dftbp_extlibs_mpifx, only : MPI_SUM, mpifx_allreduceip
-  
+  use dftbp_math_scalafxext, only : distrib2replicated
+
 #:endif
   
   implicit none
@@ -440,8 +440,10 @@ contains
       allocate(eigVecGlb(norb,norb,nSpin))
       allocate(ovrXevGlb(norb,norb,nSpin))
       do ss = 1, nSpin
-        call local2GlobalBlacsArray(env, denseDesc, grndEigVecs(:,:,ss), eigVecGlb(:,:,ss))
-        call local2GlobalBlacsArray(env, denseDesc, ovrXev(:,:,ss), ovrXevGlb(:,:,ss))
+        call distrib2replicated(env%blacs%orbitalGrid, env%mpi%groupComm, denseDesc%blacsOrbSqr,&
+            & grndEigVecs(:,:,ss), eigVecGlb(:,:,ss))
+        call distrib2replicated(env%blacs%orbitalGrid, env%mpi%groupComm, denseDesc%blacsOrbSqr,&
+            & ovrXev(:,:,ss), ovrXevGlb(:,:,ss))
       end do
     end if
 

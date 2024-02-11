@@ -26,7 +26,8 @@ module dftbp_timedep_linrespcommon
   use dftbp_extlibs_scalapackfx, only : DLEN_, M_, N_, NB_, CSRC_, MB_, RSRC_, scalafx_indxl2g,&
        & scalafx_getlocalshape
   use dftbp_extlibs_mpifx, only : MPI_SUM, mpifx_allreduceip, mpifx_allgatherv
-  
+  use dftbp_math_scalafxext, only : distrib2replicated
+
 #:endif
   
   implicit none
@@ -2054,8 +2055,10 @@ contains
     !!eigVecGlb=0.0
     !!ovrXevGlb=0.0
     do ss = 1, 2
-      call local2GlobalBlacsArray(env, denseDesc, grndEigVecs(:,:,ss), eigVecGlb(:,:,ss))
-      call local2GlobalBlacsArray(env, denseDesc, ovrXev(:,:,ss), ovrXevGlb(:,:,ss))
+      call distrib2replicated(env%blacs%orbitalGrid, env%mpi%groupComm, denseDesc%blacsOrbSqr,&
+          & grndEigVecs(:,:,ss), eigVecGlb(:,:,ss))
+      call distrib2replicated(env%blacs%orbitalGrid, env%mpi%groupComm, denseDesc%blacsOrbSqr,&
+          & ovrXev(:,:,ss), ovrXevGlb(:,:,ss))
     end do
  
     do i = 1, nexc
@@ -2530,44 +2533,6 @@ contains
   end subroutine incMemStratmann
 
 #:if WITH_SCALAPACK
-  
-  !> Collect distributed BLACS orbitalGrid array into global one
-  !> Note: should maybe go into different module and be more general
-  subroutine local2GlobalBlacsArray(env, denseDesc, locArray, glbArray)
-
-    !> Environment settings
-    type(TEnvironment), intent(in) :: env
-
-    !> Dense matrix descriptor
-    type(TDenseDescr), intent(in) :: denseDesc
-
-    !> Distributed array
-    real(dp), intent(in) :: locArray(:,:)
-
-    !> Global array
-    real(dp), intent(out) :: glbArray(:,:)    
-    
-    integer :: desc(DLEN_), iLoc, jLoc, iGlb, jGlb, nLocalRows, nLocalCols, ierr 
-
-    desc(:) = denseDesc%blacsOrbSqr
-
-    call scalafx_getlocalshape(env%blacs%orbitalGrid, denseDesc%blacsOrbSqr, nLocalRows,&
-        & nLocalCols)
-
-    glbArray = 0.0_dp
-    do iLoc = 1, nLocalRows
-      iGlb = scalafx_indxl2g(iLoc, desc(MB_), env%blacs%orbitalGrid%myrow, desc(RSRC_), &
-             & env%blacs%orbitalGrid%nrow)
-      do jLoc = 1, nLocalCols
-        jGlb = scalafx_indxl2g(jLoc, desc(NB_), env%blacs%orbitalGrid%mycol, desc(CSRC_), &
-             & env%blacs%orbitalGrid%ncol)
-        glbArray(iGlb,jGlb) = locArray(iLoc,jLoc)
-      end do
-    end do
-    call mpifx_allreduceip(env%mpi%groupComm, glbArray, MPI_SUM)
-    
-  end subroutine local2GlobalBlacsArray
-
 
   !> Determine size and offsets for distributed RPA/Casida vectors
   subroutine localSizeCasidaVectors(nProcs, nDim, locSize, vOffSet)
