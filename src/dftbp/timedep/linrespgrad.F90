@@ -1037,7 +1037,9 @@ contains
   #:if WITH_SCALAPACK
     
     integer :: iGlb, fGlb, nLoc, iam, comm
+  #:if WITH_ARPACK
     external mpi_allreduce, pdsaupd, pdseupd 
+  #:endif
 
     iam = env%mpi%globalComm%rank
     comm = env%mpi%globalComm%id 
@@ -1094,7 +1096,7 @@ contains
     do
 
       ! call the reverse communication interface from arpack
-    #:if WITH_SCALAPACK
+    #:if WITH_SCALAPACK and WITH_ARPACK
 
       call pdsaupd (comm, ido, "I", nLoc, "SM", nexc, ARTOL, resid, ncv, vv, nLoc, iparam,&
           & ipntr, workd, workl, lworkl, info)
@@ -1154,7 +1156,7 @@ contains
       ! to DSAUPD.  These arguments MUST NOT BE MODIFIED between the the last call to DSAUPD and the
       ! call to DSEUPD.
       ! Note: At this point xpy holds the hermitian eigenvectors F
-    #:if WITH_SCALAPACK
+    #:if WITH_SCALAPACK and WITH_ARPACK
 
       call pdseupd (comm, rvec, "All", selection, eval, vv, nLoc, sigma, "I", nLoc,& 
            & "SM", nexc, ARTOL, resid, ncv, vv, nLoc, iparam, ipntr, workd, workl, lworkl, info)
