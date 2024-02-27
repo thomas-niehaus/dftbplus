@@ -5884,7 +5884,7 @@ contains
 
     if (isRS_LinResp) then
       if (input%ctrl%lrespini%iLinRespSolver /= linRespSolverTypes%Stratmann) then
-        call error("TD-LC-DFTB implemented only for Stratmann diagonaliser.")
+        !!call error("TD-LC-DFTB implemented only for Stratmann diagonaliser.")
       end if
       if (tPeriodic) then
         call error("Range separated excited states for periodic geometries are currently&

@@ -19,7 +19,7 @@ module dftbp_extlibs_arpack
   implicit none
   private
 
-  public :: withArpack, saupd, seupd
+  public :: withArpack, saupd, seupd, naupd, neupd
 
 #:if WITH_ARPACK
 
@@ -43,7 +43,21 @@ module dftbp_extlibs_arpack
   #:for PREC in [("s"),("d")]
     module procedure ${PREC}$seupd
   #:endfor
-  end interface
+  end interface seupd
+  
+  !> Dummy routines, as ARPACK library is not compiled in
+  interface naupd
+  #:for PREC in [("s"),("d")]
+    module procedure ${PREC}$naupd
+  #:endfor
+  end interface naupd
+
+  !> Dummy routines, as ARPACK library is not compiled in
+  interface neupd
+  #:for PREC in [("s"),("d")]
+    module procedure ${PREC}$neupd
+  #:endfor
+  end interface neupd  
 
 contains
 
@@ -141,5 +155,90 @@ contains
 #:if WITH_ARPACK
   end interface seupd
 #:endif
+
+#:if WITH_ARPACK
+  !> Wrapper around ARPACK routines snaupd/dnaupd.
+  interface naupd
+#:endif
+  #:for PREC, LABEL, VTYPE in [("s","single","rsp"),("d","double","rdp")]
+  #:if not WITH_ARPACK
+    !> Dummy ARPACK routine
+  #:endif
+    !> ${LABEL}$ precision Arnoldi solver call
+    subroutine ${PREC}$naupd(ido, bmat, n, which, nev, tol, resid, ncv, v, ldv, iparam, ipntr,&
+        & workd, workl, lworkl, info)
+    #:if WITH_ARPACK
+      import :: ${VTYPE}$
+    #:endif
+      integer, intent(inout) :: ido
+      character, intent(in) :: bmat
+      integer, intent(in) :: n
+      character(2), intent(in) :: which
+      integer, intent(in) :: nev
+      real(${VTYPE}$), intent(in) :: tol
+      real(${VTYPE}$), intent(inout) :: resid(n)
+      integer, intent(in) :: ncv
+      integer, intent(in) :: ldv
+      real(${VTYPE}$), intent(out) :: v(ldv, ncv)
+      integer, intent(inout) :: iparam(11)
+      integer, intent(out) :: ipntr(11)
+      real(${VTYPE}$), intent(inout) :: workd(3 * n)
+      integer, intent(in) :: lworkl
+      real(${VTYPE}$), intent(inout) :: workl(lworkl)
+      integer, intent(inout) :: info
+     #:if not WITH_ARPACK
+      call stubError("${PREC}$naupd")
+     #:endif
+    end subroutine ${PREC}$naupd
+  #:endfor
+#:if WITH_ARPACK
+  end interface naupd
+#:endif
+
+#:if WITH_ARPACK
+  !> Wrapper around ARPACK routines sneupd/dneupd.
+  interface neupd
+#:endif
+  #:for PREC, LABEL, VTYPE in [("s","single","rsp"),("d","double","rdp")]
+  #:if not WITH_ARPACK
+    !> Dummy ARPACK routine
+  #:endif
+    !> ${LABEL}$ precision return from the results of the solver
+    subroutine ${PREC}$neupd(rvec, howmny, sel, dr, di, z, ldz, sigmar, sigmai, workev, bmat, n,&
+        & which, nev, tol, resid, ncv, v, ldv, iparam, ipntr, workd, workl, lworkl, info)
+    #:if WITH_ARPACK
+      import :: ${VTYPE}$
+    #:endif
+      logical, intent(in) :: rvec
+      character, intent(in) :: howmny
+      integer, intent(in) :: ncv
+      logical, intent(in) :: sel(ncv)
+      integer, intent(in) :: nev
+      real(${VTYPE}$), intent(out) :: dr(nev), di(nev)
+      integer, intent(in) :: ldz
+      real(${VTYPE}$), intent(out) :: z(ldz, nev)
+      real(${VTYPE}$), intent(in) :: sigmar, sigmai
+      real(${VTYPE}$), intent(inout) :: workev(3 * n)
+      character, intent(in) :: bmat
+      integer, intent(in) :: n
+      character(2), intent(in) :: which
+      real(${VTYPE}$), intent(in) :: tol
+      real(${VTYPE}$), intent(in) :: resid(n)
+      integer, intent(in) :: ldv
+      real(${VTYPE}$), intent(inout) :: v(ldv, ncv)
+      integer, intent(in) :: iparam(7)
+      integer, intent(inout) :: ipntr(11)
+      real(${VTYPE}$), intent(inout) :: workd(2 * n)
+      integer, intent(in) :: lworkl
+      real(${VTYPE}$), intent(inout) :: workl(lworkl)
+      integer, intent(inout) :: info
+     #:if not WITH_ARPACK
+      call stubError("${PREC}$neupd")
+     #:endif
+    end subroutine ${PREC}$neupd
+  #:endfor
+#:if WITH_ARPACK
+  end interface neupd
+#:endif  
 
 end module dftbp_extlibs_arpack

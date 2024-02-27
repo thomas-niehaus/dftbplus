@@ -22,8 +22,8 @@ module dftbp_timedep_linrespgrad
   use dftbp_dftb_shortgammafuncs, only : expGammaPrime
   use dftbp_dftb_sk, only : rotateH0
   use dftbp_dftb_slakocont, only : TSlakoCont, getMIntegrals, getSKIntegrals
-  use dftbp_extlibs_arpack, only : withArpack, saupd, seupd
-  use dftbp_io_message, only : error
+  use dftbp_extlibs_arpack, only : withArpack, saupd, seupd, naupd, neupd
+  use dftbp_io_message, only : error, warning
   use dftbp_io_taggedoutput, only : TTaggedWriter, tagLabels
   use dftbp_math_blasroutines, only : gemm, hemv, symm, herk
   use dftbp_math_degeneracy, only : TDegeneracyFind
@@ -70,6 +70,9 @@ module dftbp_timedep_linrespgrad
   !> Tolerance for ARPACK solver.
   real(dp), parameter :: ARTOL = epsilon(1.0_rsp)
 
+  !> Tolerance for negative eigenvalues of RPA equations
+  real(dp), parameter :: NEG_RPA_TOL = epsilon(1.0_rsp)
+  
   !> Threshold for Stratmann solver
   real(dp), parameter :: CONV_THRESH_STRAT = epsilon(1.0_rsp)
 
@@ -619,7 +622,7 @@ contains
     call rindxov_array(win, nxov, nxoo, nxvv, getIA, getIJ, getAB, iatrans)
 
     if (this%iLinRespSolver /= linrespSolverTypes%stratmann .and. tHybridXc) then
-      call error("Range separation requires the Stratmann solver for excitations")
+      !!call error("Range separation requires the Stratmann solver for excitations")
     end if
 
     call env%globalTimer%stopTimer(globalTimers%lrSetup)
@@ -634,7 +637,8 @@ contains
             & nxoo_ud, nxvv_ud, nxov_ud, nxov_rd, locSize, vOffSet, iaTrans, getIA, getIJ,&
             & getAB, env, denseDesc, ovrXev, ovrXevGlb, grndEigVecs, eigVecGlb, filling,&
             & sqrOccIA(:nxov_rd), gammaMat, species0, this%spinW, transChrg, this%testArnoldi,&
-            & eval, xpy, xmy, this%onSiteMatrixElements, orb, tHybridXc, tZVector)
+            & eval, xpy, xmy, this%onSiteMatrixElements, orb, tHybridXc, lrGamma, tZVector)
+        write(12,'(6(2x,f12.8))') xpy(:,2)
       case (linrespSolverTypes%stratmann)
         call buildAndDiagExcMatrixStratmann(this%tSpin, this%subSpaceFactorStratmann,&
             & wij(:nxov_rd), sym, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud, nxov_rd,&
@@ -642,6 +646,7 @@ contains
             & grndEigVecs, eigVecGlb, filling, sqrOccIA(:nxov_rd), gammaMat, species0,&
             & this%spinW, transChrg, eval, xpy, xmy, this%onSiteMatrixElements, orb, tHybridXc,&
             & lrGamma, tZVector)
+        write(12,'(6(2x,f12.8))') xpy(:,2)
       end select
       call env%globalTimer%stopTimer(globalTimers%lrSolver)
 
@@ -951,7 +956,8 @@ contains
   subroutine buildAndDiagExcMatrixArpack(tSpin, wij, sym, win, nocc_ud, nvir_ud,&
       & nxoo_ud, nxvv_ud, nxov_ud, nxov_rd, locSize, vOffSet, iaTrans, getIA, getIJ, getAB,&
       & env, denseDesc, ovrXev, ovrXevGlb, grndEigVecs, eigVecGlb, filling, sqrOccIA, gammaMat,&
-      & species0, spinW, transChrg, testArnoldi, eval, xpy, xmy, onsMEs, orb, tHybridXc, tZVector)
+      & species0, spinW, transChrg, testArnoldi, eval, xpy, xmy, onsMEs, orb, tHybridXc, lrGamma,& 
+      & tZVector)
 
     !> Spin polarisation?
     logical, intent(in) :: tSpin
@@ -1058,12 +1064,16 @@ contains
     !> Is calculation range-separated?
     logical, intent(in) :: tHybridXc
 
+    !> Electrostatic matrix, long-range corrected
+    real(dp), allocatable, intent(in) :: lrGamma(:,:)
+
     !> Is the Z-vector equation to be solved later?
     logical, intent(in) :: tZVector
 
     real(dp), allocatable :: workl(:), workd(:), resid(:), vv(:,:), qij(:)
-    real(dp) :: sigma, omega
-    integer :: iparam(11), ipntr(11)
+    real(dp), allocatable :: workHyb(:), evalIm(:), workev(:)
+    real(dp) :: sigma, sigmaIm, omega, rTmp
+    integer :: iparam(11), ipntr(14)
     integer :: ido, ncv, lworkl, info
     logical, allocatable :: selection(:)
     logical :: rvec
@@ -1093,12 +1103,15 @@ contains
     natom = size(gammaMat, dim=1)
 
     @:ASSERT(all(shape(xpy) == [ nxov_rd, nexc ]))
-    @:ASSERT(tHybridXc .eqv. .false.)
 
     ! Three times more Lanczos vectors than desired eigenstates
     ncv = min(3 * nexc, nxov_rd)
 
-    lworkl = ncv * (ncv + 8)
+    if(tHybridXc) then
+      lworkl = ncv * (3*ncv + 6)
+    else
+      lworkl = ncv * (ncv + 8)
+    end if
 
     allocate(workl(lworkl))
     allocate(qij(natom))
@@ -1115,6 +1128,15 @@ contains
     allocate(workd(3 * nxov_rd))
     allocate(resid(nxov_rd))
     allocate(vv(nxov_rd, ncv))
+    
+    if(tHybridXc) then
+      allocate(workHyb(nxov_rd))
+      allocate(evalIm(nexc))
+      allocate(workev(3*ncv))
+      workHyb(:) = 0.0_dp
+      evalIm(:) = 0.0_dp
+      workev(:) = 0.0_dp 
+    end if 
     
   #:endif  
 
@@ -1142,9 +1164,21 @@ contains
           & ipntr, workd, workl, lworkl, info)
  
     #:else
-      
-      call saupd (ido, "I", nxov_rd, "SM", nexc, ARTOL, resid, ncv, vv, nxov_rd, iparam,&
-          & ipntr, workd, workl, lworkl, info)
+
+      if(tHybridXc) then
+
+        ! Solve non-hermitian eigenvalue problem (A-B)(A+B) |X+Y> = w^2 |X+Y> 
+        call naupd (ido, "I", nxov_rd, "SM", nexc, ARTOL, resid, ncv, vv, nxov_rd, iparam,&
+            & ipntr, workd, workl, lworkl, info)
+        
+      else
+
+        ! Solve hermitian eigenvalue problem (A-B)^1/2 (A+B) (A-B)^1/2 |F> = w^2 |F>
+        ! with |F> = (A-B)^-1/2 |X+Y> 
+        call saupd (ido, "I", nxov_rd, "SM", nexc, ARTOL, resid, ncv, vv, nxov_rd, iparam,&
+            & ipntr, workd, workl, lworkl, info)
+        
+      end if
       
     #:endif
 
@@ -1155,8 +1189,8 @@ contains
 
       ! still running, test for an error return
       if (abs(ido) /= 1) then
-        write(tmpStr,"(' Unexpected return from arpack routine saupd, IDO ',I0, ' INFO ',I0)")&
-            & ido, info
+        write(tmpStr,"(' Unexpected return from arpack routine (n/s)aupd, IDO ',I0, ' INFO ',I0)")&
+              & ido, info
         call error(tmpStr)
       end if
 
@@ -1170,11 +1204,26 @@ contains
           & workd(ipntr(2):ipntr(2)+nLoc-1), tHybridXc)
 
     #:else
-      
-      call actionAplusB(tSpin, wij, sym, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud,&
+
+      if(tHybridXc) then
+
+        call actionAplusB(tSpin, wij, sym, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud,&
+          & nxov_rd, iaTrans, getIA, getIJ, getAB, env, denseDesc, ovrXev, grndEigVecs, filling,&
+          & sqrOccIA, gammaMat, species0, spinW, onsMEs, orb, .true., transChrg, &
+          & workd(ipntr(1):ipntr(1)+nxov_rd-1), workHyb, tHybridXc, lrGamma)
+
+        call actionAminusB(tSpin, wij, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud, nxov_rd,&
+          & iaTrans, getIA, getIJ, getAB, env, denseDesc, ovrXev, grndEigVecs, filling, sqrOccIA,&
+          & transChrg, workHyb, workd(ipntr(2):ipntr(2)+nxov_rd-1), tHybridXc, lrGamma)
+        
+      else
+         
+        call actionAplusB(tSpin, wij, sym, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud,&
           & nxov_rd, iaTrans, getIA, getIJ, getAB, env, denseDesc, ovrXev, grndEigVecs, filling,&
           & sqrOccIA, gammaMat, species0, spinW, onsMEs, orb, .false., transChrg, &
           & workd(ipntr(1):ipntr(1)+nxov_rd-1), workd(ipntr(2):ipntr(2)+nxov_rd-1), tHybridXc)
+
+      end if
       
     #:endif
       
@@ -1182,7 +1231,7 @@ contains
 
     ! check returned info flag for errors
     if (info < 0) then
-      write(tmpStr,"(' Error with ARPACK routine saupd, info = ',I0)")info
+      write(tmpStr,"(' Error with ARPACK routine (n/s)aupd, info = ',I0)")info
       call error(tmpStr)
     else if (info  ==  1) then
       call error("Maximum number of iterations reached. Increase the number of excited states to&
@@ -1206,19 +1255,50 @@ contains
       call mpifx_allreduceip(env%mpi%globalComm, xpy, MPI_SUM)
 
      #:else
-       
-      call seupd (rvec, "All", selection, eval, xpy, nxov_rd, sigma, "I", nxov_rd, "SM",&
-          & nexc, ARTOL, resid, ncv, vv, nxov_rd, iparam, ipntr, workd, workl, lworkl, info)
+
+      if(tHybridXc) then
+        
+        call neupd (rvec, "All", selection, eval, evalIm, xpy, nxov_rd, sigma, sigmaIm, workev,&
+            & "I", nxov_rd, "SM", nexc, ARTOL, resid, ncv, vv, nxov_rd, iparam, ipntr, workd,&
+            & workl, lworkl, info)
+        
+      else
+
+        call seupd (rvec, "All", selection, eval, xpy, nxov_rd, sigma, "I", nxov_rd, "SM",&
+            & nexc, ARTOL, resid, ncv, vv, nxov_rd, iparam, ipntr, workd, workl, lworkl, info)
+
+      end if 
 
     #:endif
             
       ! check for error on return
+      if(tHybridXc .and. maxval(abs(evalIm)) > NEG_RPA_TOL) then
+        rTmp = sqrt(maxval(abs(evalIm))) * Hartree__eV
+        write(tmpStr,"(' Negative eigenvalues in ARPACK routine neupd, value [eV] = ',F12.4)")rTmp
+        call warning(tmpStr)
+      end if
+      
       if (info  /=  0) then
-        write(tmpStr,"(' Error with ARPACK routine seupd, info = ',I0)")info
+        write(tmpStr,"(' Error with ARPACK routine (n/s)eupd, info = ',I0)")info
         call error(tmpStr)
       end if
 
     end if
+
+    if (tZVector) then
+      xmy(:,:) = 0.0_dp
+    end if
+
+    ! Conversion from eigenvectors of the hermitian problem (F) to (X+Y) if necessary
+    do iState = 1, nExc
+      omega = sqrt(eval(iState))
+      if(.not. tHybridXc) then
+        xpy(:nxov_rd,iState) = xpy(:nxov_rd,iState) * sqrt(wij(:nxov_rd) / omega)
+      end if 
+      if (tZVector) then
+        xmy(:nxov_rd,iState) = xpy(:nxov_rd,iState) * omega / wij(:nxov_rd)
+      end if
+    end do
 
     if (testArnoldi) then
       ! tests for quality of returned eigenpairs
@@ -1240,11 +1320,26 @@ contains
         call mpifx_allreduceip(env%mpi%globalComm, Hv, MPI_SUM)
         
       #:else
+
+        if(tHybridXc) then
+
+          call actionAplusB(tSpin, wij, sym, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud,&
+            & nxov_rd, iaTrans, getIA, getIJ, getAB, env, denseDesc, ovrXev, grndEigVecs, filling,&
+            & sqrOccIA, gammaMat, species0, spinW, onsMEs, orb, .true., transChrg, &
+            & xpy(:,iState), workHyb, tHybridXc, lrGamma)
+
+          call actionAminusB(tSpin, wij, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud, nxov_rd,&
+            & iaTrans, getIA, getIJ, getAB, env, denseDesc, ovrXev, grndEigVecs, filling, sqrOccIA,&
+            & transChrg, workHyb, Hv, tHybridXc, lrGamma)
         
-        call actionAplusB(tSpin, wij, sym, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud,&
+        else
+          
+          call actionAplusB(tSpin, wij, sym, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud,&
             & nxov_rd, iaTrans, getIA, getIJ, getAB, env, denseDesc, ovrXev, grndEigVecs, filling,&
             & sqrOccIA, gammaMat, species0, spinW, onsMEs, orb, .false., transChrg, xpy(:,iState),&
             & Hv, .false.)
+
+        end if 
         
       #:endif
         
@@ -1255,19 +1350,6 @@ contains
       end do
       call closeFile(fdArnoldiTest)
     end if
-
-    if (tZVector) then
-      xmy(:,:) = 0.0_dp
-    end if
-
-    ! Conversion from eigenvectors of the hermitian problem (F) to (X+Y)
-    do iState = 1, nExc
-      omega = sqrt(eval(iState))
-      xpy(:nxov_rd,iState) = xpy(:nxov_rd,iState) * sqrt(wij(:nxov_rd) / omega)
-      if (tZVector) then
-        xmy(:nxov_rd,iState) = xpy(:nxov_rd,iState) * omega / wij(:nxov_rd)
-      end if
-    end do
 
   end subroutine buildAndDiagExcMatrixArpack
 
@@ -1409,11 +1491,12 @@ contains
     real(dp), allocatable :: mP(:,:), mM(:,:), mMsqrt(:,:), mMsqrtInv(:,:), mH(:,:)
     real(dp), allocatable :: evalInt(:) ! store eigenvectors within routine
     real(dp), allocatable :: dummyM(:,:), workArray(:)
+    real(dp), allocatable :: Hv(:), orthnorm(:,:), workHyb(:)
     real(dp), allocatable :: vecNorm(:) ! will hold norms of residual vectors
     real(dp) :: dummyReal 
 
     integer :: nExc, nAtom, info, dummyInt, newVec, iterStrat, nRPA
-    integer :: subSpaceDim, memDim, workDim, prevSubSpaceDim
+    integer :: subSpaceDim, memDim, workDim, prevSubSpaceDim, iState
     integer :: ii, jj, iam
     character(lc) :: tmpStr
 
@@ -1719,11 +1802,50 @@ contains
         ! Calc. X+Y
         xpy(:,:) = matmul(vecB(:,1:subSpaceDim), evecR(1:subSpaceDim,:))
         ! Calc. X-Y, only when needed
-        if (tZVector) then
+        if (tZVector .or. .true.) then
           xmy(:,:) = matmul(vecB(:,1:subSpaceDim), evecL(1:subSpaceDim,:))
         end if
         
   #:endif
+
+        if (.true.) then
+          ! tests for quality of returned eigenpairs
+          allocate(Hv(nxov_rd))
+          allocate(workHyb(nxov_rd))
+          allocate(orthnorm(nxov_rd,nxov_rd))
+          orthnorm = matmul(transpose(xmy(:,:nExc)),xpy(:,:nExc))
+
+          write(33,"(A)")'State Ei deviation    Evec deviation  Norm deviation  Max&
+              & non-orthog'
+          do iState = 1, nExc
+
+            if(tHybridXc) then
+
+              call actionAplusB(tSpin, wij, sym, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud,&
+                & nxov_rd, iaTrans, getIA, getIJ, getAB, env, denseDesc, ovrXev, grndEigVecs, filling,&
+                & sqrOccIA, gammaMat, species0, spinW, onsMEs, orb, .true., transChrg, &
+                & xpy(:,iState), workHyb, tHybridXc, lrGamma)
+
+              call actionAminusB(tSpin, wij, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud, nxov_rd,&
+                & iaTrans, getIA, getIJ, getAB, env, denseDesc, ovrXev, grndEigVecs, filling, sqrOccIA,&
+                & transChrg, workHyb, Hv, tHybridXc, lrGamma)
+        
+            else
+          
+              call actionAplusB(tSpin, wij, sym, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud,&
+                & nxov_rd, iaTrans, getIA, getIJ, getAB, env, denseDesc, ovrXev, grndEigVecs, filling,&
+                & sqrOccIA, gammaMat, species0, spinW, onsMEs, orb, .false., transChrg, xpy(:,iState),&
+                & Hv, .false.)
+
+            end if 
+        
+            write(33,"(I4,4E16.8)")iState,&
+              & dot_product(xmy(:,iState),Hv)-eval(iState),&
+              & sqrt(sum( (Hv-xpy(:,iState)*eval(iState) )**2 )), orthnorm(iState,iState) - 1.0_dp,&
+              & max(maxval(orthnorm(:iState-1,iState)), maxval(orthnorm(iState+1:,iState)))
+          end do
+      
+        end if
         
         if(iam == 0) write(*,'(A)') '>> Stratmann converged'
         exit solveLinResp ! terminate diag. routine
@@ -1847,6 +1969,7 @@ contains
       return
     end if
 
+    write(11,'(6(2x,f12.8))') xpy(:,2)
     !$OMP PARALLEL DO DEFAULT(SHARED) PRIVATE(ii) SCHEDULE(RUNTIME)
     do ii = 1, size(xpy, dim=2)
       osz(ii) = oscillatorStrength(tSpin, snglPartTransDip, sqrt(eval(ii)), xpy(:,ii), sqrOccIA)
