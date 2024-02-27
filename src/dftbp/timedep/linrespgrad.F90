@@ -613,7 +613,7 @@ contains
         & this%tSpin)
 
     allocate(xpy(nxov_rd, this%nExc))
-    if (tZVector .or. tHybridXc) then
+    if (tZVector .or. tHybridXc .or. this%testArnoldi) then
       allocate(xmy(nxov_rd, this%nExc))
     end if
 
@@ -775,7 +775,7 @@ contains
           call solveZVectorPrecond(rhs, this%tSpin, wij(:nxov_rd), win, nocc_ud, nvir_ud, nxoo_ud,&
             & nxvv_ud, nxov_ud, nxov_rd, iaTrans, getIA, getIJ, getAB, this%nAtom, env, denseDesc,&
             & ovrXev, grndEigVecs, filling, sqrOccIA(:nxov_rd), gammaMat, species0, this%spinW, &
-            & this%onSiteMatrixElements, orb, transChrg, tHybridXc, lrGamma)
+            & this%onSiteMatrixElements, orb, transChrg, tHybridXc, .true., lrGamma)
 
           call calcWVectorZ(rhs, win, nocc_ud, getIA, getIJ, getAB, iaTrans, env, denseDesc,&
             & ovrXev, grndEigVecs, gammaMat, grndEigVal, wov, woo, wvv, transChrg, species0, &
@@ -885,7 +885,7 @@ contains
                   & nxoo_ud, nxvv_ud, nxov_ud, nxov_rd, iaTrans, getIA, getIJ, getAB, this%nAtom,&
                   & env, denseDesc, ovrXev, grndEigVecs, filling, sqrOccIA(:nxov_rd), gammaMat,&
                   & species0, this%spinW, this%onSiteMatrixElements, orb, transChrg, tHybridXc,&
-                  & lrGamma)
+                  & .true., lrGamma)
 
               call calcWVectorZ(rhs, win, nocc_ud, getIA, getIJ, getAB, iaTrans,&
                  & env, denseDesc, ovrXev, grndEigVecs, gammaMat, grndEigVal, wov, woo, wvv,&
@@ -900,10 +900,10 @@ contains
               end do
 
               call addNadiaGradients(sym, nxov_rd, this%nAtom, species0, env, denseDesc, norb,&
-                & nocc_ud, getIA, getIJ, getAB, win, grndEigVecs, pc, ovrXev, dq, dqex, gammaMat, lrGamma,&
-                & this%HubbardU, this%spinW, shift, woo, wov, wvv, transChrg, xpyn, xmyn, xpym,&
-                & xmym, coord0, orb, skHamCont, skOverCont, derivator, rhoSqr, deltaRho, tHybridXc,&
-                & hybridXc, nacv(:,:,iNac))
+                & nocc_ud, getIA, getIJ, getAB, win, grndEigVecs, pc, ovrXev, dq, dqex, gammaMat,&
+                & lrGamma, this%HubbardU, this%spinW, shift, woo, wov, wvv, transChrg, xpyn, xmyn,&
+                & xpym, xmym, coord0, orb, skHamCont, skOverCont, derivator, rhoSqr, deltaRho,&
+                & tHybridXc, hybridXc, nacv(:,:,iNac))
 
             end if
 
@@ -937,7 +937,7 @@ contains
   end subroutine LinRespGrad_old
 
 
-  !> Solves the RPA equations in their hermitian form (valid for local functionals) at finite T
+  !> Solves the RPA equations at finite temperature
   !!
   !!  [A  B] X   =    [C  0] X
   !!                W
@@ -946,12 +946,17 @@ contains
   !! (see definitions by Mark Casida, in Recent Advances in Density Functional Methods,
   !!  World Scientific, 1995, Part I, p. 155.)
   !!
-  !! The hermitian EV problem is given by \Omega F = w^2 F, with
-  !!  S = -C (A-B)^{-1} C, \Omega = - S^{-1/2} (A+B) S^{-1/2} and F = (X+Y) * sqrt(w/wia)
+  !! For local functionals the problem can be recast into a hermitian eigenvalue problem:
+  !! \Omega |F> = w^2 |F>, with
+  !! S = -C (A-B)^{-1} C, \Omega = - S^{-1/2} (A+B) S^{-1/2} and |F> = sqrt(w/wia) |X+Y>
+  !!
+  !! For non-local functionals, (A-B) is no longer diagonal and one needs to solve
+  !! (A-B)(A+B) |X+Y> = w^2 |X+Y>, a non-hermitian problem. 
+  !! We further assume that (A-B) and (A+B) are real.
   !!
   !! In this routine \Omega is diagonalised by the iterative ARPACK diagonaliser.
   !! The code deals with closed shell systems by diagonalising dedicated singlet/triplet
-  !! submatrices.
+  !! submatrices. Returned are |X+Y> and (if needed) |X-Y>.   
   !! See Dominguez JCTC 9 4901 (2013)
   subroutine buildAndDiagExcMatrixArpack(tSpin, wij, sym, win, nocc_ud, nvir_ud,&
       & nxoo_ud, nxvv_ud, nxov_ud, nxov_rd, locSize, vOffSet, iaTrans, getIA, getIJ, getAB,&
@@ -1130,13 +1135,14 @@ contains
     allocate(vv(nxov_rd, ncv))
     
     if(tHybridXc) then
-      allocate(workHyb(nxov_rd))
       allocate(evalIm(nexc))
       allocate(workev(3*ncv))
-      workHyb(:) = 0.0_dp
       evalIm(:) = 0.0_dp
       workev(:) = 0.0_dp 
-    end if 
+    end if
+    if(tHybridXc .or. testArnoldi) then
+      allocate(workHyb(nxov_rd))
+    end if
     
   #:endif  
 
@@ -1285,27 +1291,42 @@ contains
 
     end if
 
-    if (tZVector) then
-      xmy(:,:) = 0.0_dp
-    end if
-
-    ! Conversion from eigenvectors of the hermitian problem (F) to (X+Y) if necessary
-    do iState = 1, nExc
-      omega = sqrt(eval(iState))
-      if(.not. tHybridXc) then
+    ! Postprocess eigenvectors
+    if(tHybridXc) then
+      ! The RPA eigenvectors of the non-hermitian problem given by ARPACK are not orthonormal.
+      ! First, need to create |X+Y> even if no response properties (tZVector) are required.
+      do iState = 1, nExc
+        omega = sqrt(eval(iState))
+        ! Solve (A-B) |X-Y> = omega |X+Y>, |X+Y> given by ARPACK  
+        xmy(:,iState) = omega * xpy(:,iState)
+        call solveZVectorPrecond(xmy(:,iState), tSpin, wij(:nxov_rd), win, nocc_ud, nvir_ud,&
+          & nxoo_ud, nxvv_ud, nxov_ud, nxov_rd, iaTrans, getIA, getIJ, getAB, nAtom, env,&
+          & denseDesc, ovrXev, grndEigVecs, filling, sqrOccIA(:nxov_rd), gammaMat, species0, spinW,&
+          & onsMEs, orb, transChrg, tHybridXc, .false., lrGamma)
+        rTmp = sqrt(dot_product(xmy(:,iState),xpy(:,iState)))
+        ! Normalize |X+Y>, |X+Y>
+        xpy(:,iState) = xpy(:,iState) / rTmp
+        xmy(:,iState) = xmy(:,iState) / rTmp
+      end do      
+    else
+      ! The hermitian eigenvectors |F> given by ARPACK are normalized to one. We have
+      ! |X+Y> = sqrt(omega/w_ia) |F>,  |X-Y> = (omega/w_ia ) |X+Y> for local functionals
+      ! In this case (A-B) is diagonal. 
+      do iState = 1, nExc
+        omega = sqrt(eval(iState))
         xpy(:nxov_rd,iState) = xpy(:nxov_rd,iState) * sqrt(wij(:nxov_rd) / omega)
-      end if 
-      if (tZVector) then
-        xmy(:nxov_rd,iState) = xpy(:nxov_rd,iState) * omega / wij(:nxov_rd)
-      end if
-    end do
-
+        if (tZVector .or. testArnoldi) then
+          xmy(:nxov_rd,iState) = xpy(:nxov_rd,iState) * omega / wij(:nxov_rd)
+        end if
+      end do
+    end if
+    
     if (testArnoldi) then
       ! tests for quality of returned eigenpairs
       call openFile(fdArnoldiTest, testArpackOut, mode="w")
       allocate(Hv(nxov_rd))
       allocate(orthnorm(nxov_rd,nxov_rd))
-      orthnorm = matmul(transpose(xpy(:,:nExc)),xpy(:,:nExc))
+      orthnorm = matmul(transpose(xmy(:,:nExc)),xpy(:,:nExc))
 
       write(fdArnoldiTest%unit,"(A)")'State Ei deviation    Evec deviation  Norm deviation  Max&
           & non-orthog'
@@ -1321,30 +1342,19 @@ contains
         
       #:else
 
-        if(tHybridXc) then
+        call actionAplusB(tSpin, wij, sym, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud,&
+          & nxov_rd, iaTrans, getIA, getIJ, getAB, env, denseDesc, ovrXev, grndEigVecs, filling,&
+          & sqrOccIA, gammaMat, species0, spinW, onsMEs, orb, .true., transChrg, &
+          & xpy(:,iState), workHyb, tHybridXc, lrGamma)
 
-          call actionAplusB(tSpin, wij, sym, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud,&
-            & nxov_rd, iaTrans, getIA, getIJ, getAB, env, denseDesc, ovrXev, grndEigVecs, filling,&
-            & sqrOccIA, gammaMat, species0, spinW, onsMEs, orb, .true., transChrg, &
-            & xpy(:,iState), workHyb, tHybridXc, lrGamma)
-
-          call actionAminusB(tSpin, wij, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud, nxov_rd,&
-            & iaTrans, getIA, getIJ, getAB, env, denseDesc, ovrXev, grndEigVecs, filling, sqrOccIA,&
-            & transChrg, workHyb, Hv, tHybridXc, lrGamma)
-        
-        else
-          
-          call actionAplusB(tSpin, wij, sym, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud,&
-            & nxov_rd, iaTrans, getIA, getIJ, getAB, env, denseDesc, ovrXev, grndEigVecs, filling,&
-            & sqrOccIA, gammaMat, species0, spinW, onsMEs, orb, .false., transChrg, xpy(:,iState),&
-            & Hv, .false.)
-
-        end if 
+        call actionAminusB(tSpin, wij, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud, nxov_rd,&
+          & iaTrans, getIA, getIJ, getAB, env, denseDesc, ovrXev, grndEigVecs, filling, sqrOccIA,&
+          & transChrg, workHyb, Hv, tHybridXc, lrGamma)
         
       #:endif
         
         write(fdArnoldiTest%unit,"(I4,4E16.8)")iState,&
-            & dot_product(Hv,xpy(:,iState))-eval(iState),&
+            & dot_product(xmy(:,iState),Hv)-eval(iState),&
             & sqrt(sum( (Hv-xpy(:,iState)*eval(iState) )**2 )), orthnorm(iState,iState) - 1.0_dp,&
             & max(maxval(orthnorm(:iState-1,iState)), maxval(orthnorm(iState+1:,iState)))
       end do
@@ -1354,7 +1364,7 @@ contains
   end subroutine buildAndDiagExcMatrixArpack
 
 
-  !> Solves the RPA equations in their standard form at finite T
+  !> Solves the RPA equations in their standard form at finite temperature
   !!
   !!  [A  B] X   =    [C  0] X
   !!                W
@@ -2433,10 +2443,11 @@ contains
   end subroutine getZVectorEqRHS
 
 
-  !> Solving the (A+B) Z = -R equation via diagonally preconditioned conjugate gradient.
+  !> Solving (A+B) Z = -R or (A-B) Z = -R via diagonally preconditioned conjugate gradient.
   subroutine solveZVectorPrecond(rhs, tSpin, wij, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud,&
       & nxov_ud, nxov_rd, iaTrans, getIA, getIJ, getAB, natom, env, denseDesc, ovrXev, grndEigVecs,&
-      & occNr, sqrOccIA, gammaMat, species0, spinW, onsMEs, orb, transChrg, tHybridXc, lrGamma)
+      & occNr, sqrOccIA, gammaMat, species0, spinW, onsMEs, orb, transChrg, tHybridXc, tModePlus,& 
+      & lrGamma)
 
     !> On entry -R, on exit Z
     real(dp), intent(inout) :: rhs(:)
@@ -2522,6 +2533,9 @@ contains
     !> Is calculation range-separated?
     logical, intent(in) :: tHybridXc
 
+    !> Solves (A+B) Z = -R if true, otherwise (A-B) Z = -R
+    logical, intent(in) :: tModePlus
+
     !> Long-range Gamma
     real(dp), allocatable, intent(in) :: lrGamma(:,:)
 
@@ -2535,16 +2549,20 @@ contains
     allocate(qTr(nAtom))
 
     ! diagonal preconditioner
-    ! P^-1 = 1 / (A+B)_ia,ia (diagonal of the supermatrix sum A+B)
+    ! P^-1 = 1 / (A+-B)_ia,ia (diagonal of the supermatrix A+B)
     allocate(P(nxov))
     do ia = 1, nxov
-      qTr = transChrg%qTransIA(ia, env, denseDesc, ovrXev, grndEigVecs, getIA, win)
-      call hemv(qTmp, gammaMat, qTr)
-      if (.not. tSpin) then
-        rs = 4.0_dp * dot_product(qTr, qTmp) + wij(ia)
-      else
-        rs = 2.0_dp * dot_product(qTr, qTmp) + wij(ia)
-        rs = rs + 2.0_dp * sum(qTr * qTr * spinW(species0))
+      rs = wij(ia)
+      
+      if (tModePlus) then
+        qTr = transChrg%qTransIA(ia, env, denseDesc, ovrXev, grndEigVecs, getIA, win)
+        call hemv(qTmp, gammaMat, qTr)
+        if (.not. tSpin) then
+          rs = rs + 4.0_dp * dot_product(qTr, qTmp) 
+        else
+          rs = rs + 2.0_dp * dot_product(qTr, qTmp) 
+          rs = rs + 2.0_dp * sum(qTr * qTr * spinW(species0))
+        end if
       end if
 
       !! Possibly reorder spin case
@@ -2557,7 +2575,11 @@ contains
         call hemv(qTmp, lrGamma, qTr)
         aas = iaTrans(a, a, s)
         qTr = transChrg%qTransAB(aas, env, denseDesc, ovrXev, grndEigVecs, getAB)
-        rs = rs - cExchange * dot_product(qTr, qTmp)
+        if (tModePlus) then
+          rs = rs - cExchange * dot_product(qTr, qTmp)
+        else
+          rs = rs + cExchange * dot_product(qTr, qTmp)
+        end if 
       end if
 
       P(ia) = 1.0_dp / rs
@@ -2570,10 +2592,17 @@ contains
     rhs2(:) = 1.0_dp / sqrt(real(nxov,dp))
 
     ! action of matrix on vector
-    ! we need the singlet action even for triplet excitations!  
-    call actionAplusB(tSpin, wij, 'S', win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud,&
-      & nxov_rd, iaTrans, getIA, getIJ, getAB, env, denseDesc, ovrXev, grndEigVecs, occNr, sqrOccIA,&
-      & gammaMat, species0, spinW, onsMEs, orb, .true., transChrg, rhs2, rkm1, tHybridXc, lrGamma)
+    ! we need the singlet action even for triplet excitations!
+    if (tModePlus) then
+      call actionAplusB(tSpin, wij, 'S', win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud,&
+        & nxov_rd, iaTrans, getIA, getIJ, getAB, env, denseDesc, ovrXev, grndEigVecs, occNr,&
+        & sqrOccIA, gammaMat, species0, spinW, onsMEs, orb, .true., transChrg, rhs2, rkm1,&
+        & tHybridXc, lrGamma)
+    else
+      call actionAminusB(tSpin, wij, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud, nxov_rd,&
+        & iaTrans, getIA, getIJ, getAB, env, denseDesc, ovrXev, grndEigVecs, occNr, sqrOccIA,&
+        & transChrg, rhs2, rkm1, tHybridXc, lrGamma)
+    end if 
     
     rkm1(:) = rhs - rkm1
     zkm1(:) = P * rkm1
@@ -2583,9 +2612,16 @@ contains
     do kk = 1, nxov**2
 
       ! action of matrix on vector
-      call actionAplusB(tSpin, wij, 'S', win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud,&
-         & nxov_rd, iaTrans, getIA, getIJ, getAB, env, denseDesc, ovrXev, grndEigVecs, occNr, sqrOccIA,&
-         & gammaMat, species0, spinW, onsMEs, orb, .true., transChrg, pkm1, apk, tHybridXc, lrGamma)
+      if (tModePlus) then
+        call actionAplusB(tSpin, wij, 'S', win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud,&
+          & nxov_rd, iaTrans, getIA, getIJ, getAB, env, denseDesc, ovrXev, grndEigVecs, occNr,&
+          & sqrOccIA, gammaMat, species0, spinW, onsMEs, orb, .true., transChrg, pkm1, apk,& 
+          & tHybridXc, lrGamma)
+      else
+        call actionAminusB(tSpin, wij, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud, nxov_rd,&
+          & iaTrans, getIA, getIJ, getAB, env, denseDesc, ovrXev, grndEigVecs, occNr, sqrOccIA,&
+          & transChrg, pkm1, apk, tHybridXc, lrGamma)
+      end if      
       
       tmp1 = dot_product(rkm1, zkm1)
       tmp2 = dot_product(pkm1, apk)
