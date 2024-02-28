@@ -626,9 +626,8 @@ contains
     end if
 
     call env%globalTimer%stopTimer(globalTimers%lrSetup)
-
+    
     do isym = 1, size(symmetries)
-
       sym = symmetries(isym)
       call env%globalTimer%startTimer(globalTimers%lrSolver)
       select case (this%iLinRespSolver)
@@ -638,7 +637,6 @@ contains
             & getAB, env, denseDesc, ovrXev, ovrXevGlb, grndEigVecs, eigVecGlb, filling,&
             & sqrOccIA(:nxov_rd), gammaMat, species0, this%spinW, transChrg, this%testArnoldi,&
             & eval, xpy, xmy, this%onSiteMatrixElements, orb, tHybridXc, lrGamma, tZVector)
-        write(12,'(6(2x,f12.8))') xpy(:,2)
       case (linrespSolverTypes%stratmann)
         call buildAndDiagExcMatrixStratmann(this%tSpin, this%subSpaceFactorStratmann,&
             & wij(:nxov_rd), sym, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud, nxov_rd,&
@@ -646,7 +644,6 @@ contains
             & grndEigVecs, eigVecGlb, filling, sqrOccIA(:nxov_rd), gammaMat, species0,&
             & this%spinW, transChrg, eval, xpy, xmy, this%onSiteMatrixElements, orb, tHybridXc,&
             & lrGamma, tZVector)
-        write(12,'(6(2x,f12.8))') xpy(:,2)
       end select
       call env%globalTimer%stopTimer(globalTimers%lrSolver)
 
@@ -1529,7 +1526,7 @@ contains
     iam = 0
     
   #:endif
- 
+
     if (allocated(onsMEs)) then
       write(tmpStr,'(A)') 'Onsite corrections not available in Stratmann diagonaliser.'
       call error(tmpStr)
@@ -1817,45 +1814,6 @@ contains
         end if
         
   #:endif
-
-        if (.true.) then
-          ! tests for quality of returned eigenpairs
-          allocate(Hv(nxov_rd))
-          allocate(workHyb(nxov_rd))
-          allocate(orthnorm(nxov_rd,nxov_rd))
-          orthnorm = matmul(transpose(xmy(:,:nExc)),xpy(:,:nExc))
-
-          write(33,"(A)")'State Ei deviation    Evec deviation  Norm deviation  Max&
-              & non-orthog'
-          do iState = 1, nExc
-
-            if(tHybridXc) then
-
-              call actionAplusB(tSpin, wij, sym, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud,&
-                & nxov_rd, iaTrans, getIA, getIJ, getAB, env, denseDesc, ovrXev, grndEigVecs, filling,&
-                & sqrOccIA, gammaMat, species0, spinW, onsMEs, orb, .true., transChrg, &
-                & xpy(:,iState), workHyb, tHybridXc, lrGamma)
-
-              call actionAminusB(tSpin, wij, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud, nxov_rd,&
-                & iaTrans, getIA, getIJ, getAB, env, denseDesc, ovrXev, grndEigVecs, filling, sqrOccIA,&
-                & transChrg, workHyb, Hv, tHybridXc, lrGamma)
-        
-            else
-          
-              call actionAplusB(tSpin, wij, sym, win, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud,&
-                & nxov_rd, iaTrans, getIA, getIJ, getAB, env, denseDesc, ovrXev, grndEigVecs, filling,&
-                & sqrOccIA, gammaMat, species0, spinW, onsMEs, orb, .false., transChrg, xpy(:,iState),&
-                & Hv, .false.)
-
-            end if 
-        
-            write(33,"(I4,4E16.8)")iState,&
-              & dot_product(xmy(:,iState),Hv)-eval(iState),&
-              & sqrt(sum( (Hv-xpy(:,iState)*eval(iState) )**2 )), orthnorm(iState,iState) - 1.0_dp,&
-              & max(maxval(orthnorm(:iState-1,iState)), maxval(orthnorm(iState+1:,iState)))
-          end do
-      
-        end if
         
         if(iam == 0) write(*,'(A)') '>> Stratmann converged'
         exit solveLinResp ! terminate diag. routine
@@ -1979,7 +1937,6 @@ contains
       return
     end if
 
-    write(11,'(6(2x,f12.8))') xpy(:,2)
     !$OMP PARALLEL DO DEFAULT(SHARED) PRIVATE(ii) SCHEDULE(RUNTIME)
     do ii = 1, size(xpy, dim=2)
       osz(ii) = oscillatorStrength(tSpin, snglPartTransDip, sqrt(eval(ii)), xpy(:,ii), sqrOccIA)
