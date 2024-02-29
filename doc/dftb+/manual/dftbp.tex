@@ -5565,7 +5565,8 @@ available for range separated calculations.
   \item[\is{SubSpaceFactor}] The initial subspace for the diagonalisation is
     given by \is{SubSpaceFactor} times the number of excited states to solve
     for. Small values of \is{SubSpaceFactor} speed up the calculation, but might
-    lead to convergence problems. In this case the calculation needs to be
+    lead to convergence problems. This manifests in error messages
+    issued by the diagonalisation routine.  In this case the calculation needs to be
     restarted with an increased value of \is{SubSpaceFactor}.
   \end{description}
 

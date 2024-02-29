@@ -701,8 +701,6 @@ contains
       doVanillaZvector = .true.
       if (doAllZVectors) then
 
-        call env%globalTimer%startTimer(globalTimers%lrZVector)
-
         nStartLev = 1
         nEndLev = this%nExc
 
@@ -761,6 +759,8 @@ contains
 
           omega = sqrt(eval(iLev))
 
+          call env%globalTimer%startTimer(globalTimers%lrZVector)
+
          ! solve for Z and W to get excited state density matrix
           call getZVectorEqRHS(tHybridXc, xpy(:,iLev), xmy(:,iLev), win, env, denseDesc,&
             & nocc_ud, transChrg, getIA, getIJ, getAB, iatrans, this%nAtom, species0, grndEigVal,&
@@ -771,6 +771,8 @@ contains
             & nxvv_ud, nxov_ud, nxov_rd, iaTrans, getIA, getIJ, getAB, this%nAtom, env, denseDesc,&
             & ovrXev, grndEigVecs, filling, sqrOccIA(:nxov_rd), gammaMat, species0, this%spinW, &
             & this%onSiteMatrixElements, orb, transChrg, tHybridXc, lrGamma)
+
+          call env%globalTimer%stopTimer(globalTimers%lrZVector)
 
           call calcWVectorZ(rhs, win, nocc_ud, getIA, getIJ, getAB, iaTrans, env, denseDesc,&
             & ovrXev, grndEigVecs, gammaMat, grndEigVal, wov, woo, wvv, transChrg, species0, &
@@ -918,8 +920,6 @@ contains
       end if
 
     end if
-
-    call env%globalTimer%stopTimer(globalTimers%lrZVector)
     
     !> Omega has possibly been overwritten for CI optimization or NA couplings, but should always
     !! refer to nstat
@@ -1406,7 +1406,7 @@ contains
     real(dp), allocatable :: evecL(:,:), evecR(:,:) ! left and right eigenvectors of Mnh
     real(dp), allocatable :: vP(:,:), vM(:,:) ! vec. for (A+B)b_i, (A-B)b_i
     ! matrices M_plus, M_minus, M_minus^(1/2), M_minus^(-1/2) and M_herm~=resp. mat on subsapce
-    real(dp), allocatable :: mP(:,:), mM(:,:), mMsqrt(:,:), mMsqrtInv(:,:), mH(:,:)
+    real(dp), allocatable :: mP(:,:), mM(:,:), mMsqrt(:,:), mMsqrtInv(:,:), mH(:,:),mTmp(:,:), evg(:)
     real(dp), allocatable :: evalInt(:) ! store eigenvectors within routine
     real(dp), allocatable :: dummyM(:,:), workArray(:)
     real(dp), allocatable :: vecNorm(:) ! will hold norms of residual vectors
@@ -1418,7 +1418,6 @@ contains
     character(lc) :: tmpStr
 
     logical :: didConverge
-    external dsymm, dsyev, dgemm
     
   #:if WITH_SCALAPACK
     
@@ -1470,6 +1469,8 @@ contains
     allocate(mMsqrt(memDim, memDim))
     allocate(mMsqrtInv(memDim, memDim))
     allocate(mH(memDim, memDim))
+    allocate(mTmp(memDim, memDim))
+    allocate(evg(memDim))
     allocate(dummyM(memDim, memDim))
     allocate(evalInt(memDim))
     allocate(evecL(memDim, nExc))
@@ -1595,33 +1596,30 @@ contains
 
       end if
 
-      call calcMatrixSqrt(mM, subSpaceDim, memDim, workArray, workDim, mMsqrt, mMsqrtInv)
+      call env%globalTimer%startTimer(globalTimers%lrMatrixSqrt)
 
-      call dsymm('L', 'U', subSpaceDim, subSpaceDim, 1.0_dp, mP, memDim, mMsqrt, memDim,&
-          & 0.0_dp, dummyM, memDim)
-      call dsymm('L', 'U', subSpaceDim, subSpaceDim, 1.0_dp, mMsqrt, memDim, dummyM, memDim,&
-          & 0.0_dp, mH, memDim)
+      call calcMatrixSqrt(mM, subSpaceDim, mMsqrt, mMsqrtInv)
 
+      call env%globalTimer%stopTimer(globalTimers%lrMatrixSqrt)
+
+      call symm(dummyM(:subSpaceDim,:subSpaceDim), 'L', mP(:subSpaceDim,:subSpaceDim),& 
+        & mMsqrt(:subSpaceDim,:subSpaceDim), uplo='U')
+      call symm(mH(:subSpaceDim,:subSpaceDim), 'L', mMsqrt(:subSpaceDim,:subSpaceDim),& 
+        & dummyM(:subSpaceDim,:subSpaceDim), uplo='U')
+      
       ! Diagonalise in subspace
-      call dsyev('V', 'U', subSpaceDim, mH, memDim, evalInt, workArray, workDim, info)
-      if (info /= 0) then
-        if (subSpaceFactor * nExc < nxov_rd) then
-          write(tmpStr,'(A)') 'TDDFT diagonalisation failure. Increase SubSpaceFactor.'
-        else
-          write(tmpStr,'(A)') 'TDDFT diagonalisation failure. Insufficient transitions available to&
-              & converge.'
-        end if
-        call error(tmpStr)
-      endif
+      call env%globalTimer%startTimer(globalTimers%lrSubDiag)
+      call heev(mH(:subSpaceDim,:subSpaceDim), evalInt, 'U', 'V')
+      call env%globalTimer%stopTimer(globalTimers%lrSubDiag)
 
       ! This yields T=(A-B)^(-1/2)|X+Y>.
       ! Calc. |R_n>=|X+Y>=(A-B)^(1/2)T and |L_n>=|X-Y>=(A-B)^(-1/2)T.
       ! Transformation preserves orthonormality.
       ! Only compute up to nExc index, because only that much needed.
-      call dsymm('L', 'U', subSpaceDim, nExc, 1.0_dp, Mmsqrt, memDim, Mh, memDim, 0.0_dp,&
-          & evecR, memDim)
-      call dsymm('L', 'U', subSpaceDim, nExc, 1.0_dp, Mmsqrtinv, memDim, Mh, memDim, 0.0_dp,&
-          & evecL, memDim)
+      call symm(evecR(:subSpaceDim,:), 'L', Mmsqrt(:subSpaceDim,:subSpaceDim),&
+        & Mh(:subSpaceDim,:subSpaceDim), uplo='U')
+      call symm(evecL(:subSpaceDim,:), 'L', Mmsqrtinv(:subSpaceDim,:subSpaceDim),& 
+        & Mh(:subSpaceDim,:subSpaceDim), uplo='U')
 
       ! Need |X-Y>=sqrt(w)(A-B)^(-1/2)T, |X+Y>=(A-B)^(1/2)T/sqrt(w) for proper solution to original
       ! EV problem, only use first nExc vectors
@@ -1639,11 +1637,10 @@ contains
 
       ! Calculate the residual vectors
       !   calcs. all |R_n>
-      call dgemm('N', 'N', nRPA, nExc, subSpaceDim, 1.0_dp, vecB, nRPA, evecR, memDim,&
-          & 0.0_dp, vecB(1,subSpaceDim+1), nRPA)
-      !   calcs. all |L_n>
-      call dgemm('N', 'N', nRPA, nExc, subSpaceDim, 1.0_dp, vecB, nRPA, evecL, memDim,&
-          & 0.0_dp, vecB(1,subSpaceDim+1+nExc), nRPA)
+      call gemm(vecB(:,subSpaceDim + 1:subSpaceDim + nExc), vecB(:,:subSpaceDim),& 
+        & evecR(:subSpaceDim,:nExc))
+      call gemm(vecB(:,subSpaceDim + 1 + nExc:subSpaceDim + 2*nExc), vecB(:,:subSpaceDim),& 
+        & evecL(:subSpaceDim,:nExc))
 
       do ii = 1, nExc
         dummyReal = -sqrt(evalInt(ii))
@@ -1652,12 +1649,12 @@ contains
       end do
 
       ! (A-B)|L_n> for all n=1,..,nExc
-      call dgemm('N', 'N', nRPA, nExc, subSpaceDim, 1.0_dp, vM, nRPA, evecL, memDim, 1.0_dp,&
-          & vecB(1, subSpaceDim + 1), nRPA)
+      call gemm(vecB(:,subSpaceDim + 1:subSpaceDim + nExc), vM(:,:subSpaceDim),&
+        & evecL(:subSpaceDim,:nExc), beta=1.0_dp)
       ! (A+B)|R_n> for all n=1,..,nExc
-      call dgemm('N', 'N', nRPA, nExc, subSpaceDim, 1.0_dp, vP, nRPA, evecR, memDim, 1.0_dp,&
-          & vecB(1, subSpaceDim + 1 + nExc), nRPA)
-
+      call gemm(vecB(:,subSpaceDim + 1 + nExc:subSpaceDim + 2*nExc), vP(:,:subSpaceDim),&
+        & evecR(:subSpaceDim,:nExc), beta=1.0_dp)
+      
       ! calc. norms of residual vectors to check for convergence
       didConverge = .true.
       do ii = subSpaceDim + 1, subSpaceDim + nExc
@@ -3739,7 +3736,6 @@ contains
 
     real(dp), allocatable :: qIJ(:), gqIJ(:), qX(:,:), Gq(:,:)
     integer :: i, a, b, s, ias, ibs, abs, nOrb, nXov
-    external dsymv
     
     nOrb = size(ovrXev, dim=1)
     nXov = size(XorY)
@@ -3763,7 +3759,7 @@ contains
     Gq(:,:) = 0.0_dp
     do ias = 1, nXov
       qIJ = transChrg%qTransIA(ias, env, denseDesc, ovrXev, grndEigVecs, getIA, win)
-      call dsymv('U', nAtom, 1.0_dp, lrGamma, nAtom, qIJ, 1, 0.0_dp, gqIJ, 1)
+      call hemv(gqIJ, lrGamma, qIJ, uplo='U')
       Gq(:,ias) = gqIJ(:)
     end do
 
@@ -3838,7 +3834,6 @@ contains
 
     real(dp), allocatable :: qIJ(:), gqIJ(:), qX(:,:), Gq(:,:)
     integer :: i, j, a, s, ias, jas, ijs, nOrb, nXov
-    external dsymv
 
     nOrb = size(ovrXev, dim=1)
     nXov = size(XorY)
@@ -3863,7 +3858,7 @@ contains
     do ias = 1, nXov
       call indXov(win, ias, getIA, i, a, s)
       qIJ = transChrg%qTransIA(ias, env, denseDesc, ovrXev, grndEigVecs, getIA, win)
-      call dsymv('U', nAtom, 1.0_dp, lrGamma, nAtom, qIJ, 1, 0.0_dp, gqIJ, 1)
+      call hemv(gqIJ, lrGamma, qIJ, uplo='U')
       Gq(:,ias) = gqIJ
     end do
 
@@ -3941,7 +3936,6 @@ contains
 
     real(dp), allocatable :: qIJ(:), gqIJ(:), qX(:,:), Gq(:,:)
     integer :: i, j, a, b, s, ias, ibs, abs, ijs, jas, nOrb, nXov, iMx
-    external dsymv
 
     nOrb = size(ovrXev, dim=1)
     nXov = size(vecHovT)
@@ -3965,7 +3959,7 @@ contains
     Gq(:,:) = 0.0_dp
     do abs = 1, sum(nXvv)
       qIJ = transChrg%qTransAB(abs, env, denseDesc, ovrXev, grndEigVecs, getAB)
-      call dsymv('U', nAtom, 1.0_dp, lrGamma, nAtom, qIJ, 1, 0.0_dp, gqIJ, 1)
+      call hemv(gqIJ, lrGamma, qIJ, uplo='U')
       Gq(:,abs) = gqIJ
     end do
 
@@ -3995,7 +3989,8 @@ contains
       j = getIJ(ijs, 2)
       s = getIJ(ijs, 3)
       qIJ = transChrg%qTransIJ(ijs, env, denseDesc, ovrXev, grndEigVecs, getIJ)
-      call dsymv('U', nAtom, 1.0_dp, lrGamma, nAtom, qIJ, 1, 0.0_dp, gqIJ, 1)
+      call hemv(gqIJ, lrGamma, qIJ, uplo='U')
+      
       Gq(:,ijs) = gqIJ
     end do
 
@@ -4067,7 +4062,6 @@ contains
     real(dp), allocatable :: qIJ(:), gqIJ(:), qX(:,:), Gq(:,:), qXa(:,:,:)
     integer :: nOrb, iSpin, nSpin, iMx, soo(2)
     integer :: i, j, k, a, b, s, ij, ias, ibs, ijs, jas, iks, jks
-    external dsymv
 
     nOrb = size(ovrXev, dim=1)
     nSpin = size(t, dim=3)
@@ -4092,7 +4086,7 @@ contains
     Gq(:,:) = 0.0_dp
     do ias = 1, nXov
       qIJ = transChrg%qTransIA(ias, env, denseDesc, ovrXev, grndEigVecs, getIA, win)
-      call dsymv('U', nAtom, 1.0_dp, lrGamma, nAtom, qIJ, 1, 0.0_dp, gqIJ, 1)
+      call hemv(gqIJ, lrGamma, qIJ, uplo='U')
       Gq(:,ias) = gqIJ
     end do
 
@@ -4113,7 +4107,7 @@ contains
     Gq(:,:) = 0.0_dp
     do ijs = 1, sum(nXoo)
       qIJ = transChrg%qTransIJ(ijs, env, denseDesc, ovrXev, grndEigVecs, getIJ)
-      call dsymv('U', nAtom, 1.0_dp, lrGamma, nAtom, qIJ, 1, 0.0_dp, gqIJ, 1)
+      call hemv(gqIJ, lrGamma, qIJ, uplo='U')
       Gq(:,ijs) = gqIJ(:)
     end do
 
