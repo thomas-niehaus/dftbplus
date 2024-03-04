@@ -93,7 +93,7 @@ module dftbp_common_environment
   end type TEnvironment
 
   !> Timers and their required verbosity levels. Order must match the helper index type
-  type(TTimerItem), parameter :: globalTimerItems(35) = [&
+  type(TTimerItem), parameter :: globalTimerItems(34) = [&
       & TTimerItem("Global initialisation", 1),&
       & TTimerItem("Pre-SCC initialisation", 1),&
       & TTimerItem("Sparse H0 and S build", 4),&
@@ -127,7 +127,6 @@ module dftbp_common_environment
       & TTimerItem("Linear response Z vector", 3),&
       & TTimerItem("Linear response gradients", 3),&
       & TTimerItem("Linear response NAC", 3),&
-      & TTimerItem("Linear response matrix sqrt", 4),&
       & TTimerItem("Linear response subspace diagonalization", 4)&
       & ]
 
@@ -167,8 +166,7 @@ module dftbp_common_environment
     integer :: lrZVector = 31
     integer :: lrGradients = 32
     integer :: lrNAC = 33
-    integer :: lrMatrixSqrt = 34
-    integer :: lrSubDiag = 35
+    integer :: lrSubDiag = 34
   end type TGlobalTimersHelper
 
 

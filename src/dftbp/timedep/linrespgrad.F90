@@ -27,7 +27,7 @@ module dftbp_timedep_linrespgrad
   use dftbp_io_taggedoutput, only : TTaggedWriter, tagLabels
   use dftbp_math_blasroutines, only : gemm, hemv, symm, herk
   use dftbp_math_degeneracy, only : TDegeneracyFind
-  use dftbp_math_eigensolver, only : heev
+  use dftbp_math_eigensolver, only : heev, geev
   use dftbp_math_qm, only : makeSimilarityTrans
   use dftbp_math_sorting, only : index_heap_sort, merge_sort
   use dftbp_timedep_linrespcommon, only : excitedDipoleOut, excitedQOut, twothird,&
@@ -1325,10 +1325,10 @@ contains
     integer, intent(in) :: nxov_rd
     
     !> Local dimensions of RPA/Casida vectors under MPI per rank
-    integer, intent(in) :: locSize(:)
+    integer, allocatable, intent(in) :: locSize(:)
 
     !> Rank dependent offset of RPA/Casida vectors under MPI
-    integer, intent(in) :: vOffSet(:)
+    integer, allocatable, intent(in) :: vOffSet(:)
 
     !> Array from pairs of single particles states to compound index
     integer, intent(in) :: iaTrans(:,:,:)
@@ -1406,15 +1406,17 @@ contains
     real(dp), allocatable :: evecL(:,:), evecR(:,:) ! left and right eigenvectors of Mnh
     real(dp), allocatable :: vP(:,:), vM(:,:) ! vec. for (A+B)b_i, (A-B)b_i
     ! matrices M_plus, M_minus, M_minus^(1/2), M_minus^(-1/2) and M_herm~=resp. mat on subsapce
-    real(dp), allocatable :: mP(:,:), mM(:,:), mMsqrt(:,:), mMsqrtInv(:,:), mH(:,:),mTmp(:,:), evg(:)
-    real(dp), allocatable :: evalInt(:) ! store eigenvectors within routine
+    real(dp), allocatable :: mP(:,:), mM(:,:), mMP(:,:), mMsqrt(:,:), mMsqrtInv(:,:), mH(:,:), tmpA(:,:), tmpB(:,:), tmpC(:,:) 
+    real(dp), allocatable :: evalInt(:), evalIntIm(:)  ! store eigenvectors within routine
     real(dp), allocatable :: dummyM(:,:), workArray(:)
     real(dp), allocatable :: vecNorm(:) ! will hold norms of residual vectors
-    real(dp) :: dummyReal 
+    real(dp) :: dummyReal, dummyReal2 
 
+    integer, allocatable :: indEval(:)
     integer :: nExc, nAtom, info, dummyInt, newVec, iterStrat, nRPA
     integer :: subSpaceDim, memDim, workDim, prevSubSpaceDim
     integer :: ii, jj, iam
+   
     character(lc) :: tmpStr
 
     logical :: didConverge
@@ -1466,15 +1468,17 @@ contains
 
     allocate(mP(memDim, memDim))
     allocate(mM(memDim, memDim))
+    allocate(mMP(memDim, memDim))
     allocate(mMsqrt(memDim, memDim))
     allocate(mMsqrtInv(memDim, memDim))
     allocate(mH(memDim, memDim))
-    allocate(mTmp(memDim, memDim))
-    allocate(evg(memDim))
+    !!allocate(dummyM(memDim, nExc))
     allocate(dummyM(memDim, memDim))
     allocate(evalInt(memDim))
-    allocate(evecL(memDim, nExc))
-    allocate(evecR(memDim, nExc))
+    allocate(evalIntIm(memDim))
+    allocate(indEval(memDim))
+    allocate(evecL(memDim, memDim))
+    allocate(evecR(memDim, memDim))
     allocate(workArray(3 * memDim + 1))
     allocate(vecNorm(2 * memDim))
 
@@ -1595,12 +1599,12 @@ contains
   #:endif
 
       end if
-
-      call env%globalTimer%startTimer(globalTimers%lrMatrixSqrt)
+      
+      call env%globalTimer%startTimer(globalTimers%lrSubDiag)
 
       call calcMatrixSqrt(mM, subSpaceDim, mMsqrt, mMsqrtInv)
 
-      call env%globalTimer%stopTimer(globalTimers%lrMatrixSqrt)
+      !call env%globalTimer%stopTimer(globalTimers%lrMatrixSqrt)
 
       call symm(dummyM(:subSpaceDim,:subSpaceDim), 'L', mP(:subSpaceDim,:subSpaceDim),& 
         & mMsqrt(:subSpaceDim,:subSpaceDim), uplo='U')
@@ -1608,9 +1612,9 @@ contains
         & dummyM(:subSpaceDim,:subSpaceDim), uplo='U')
       
       ! Diagonalise in subspace
-      call env%globalTimer%startTimer(globalTimers%lrSubDiag)
+      !call env%globalTimer%startTimer(globalTimers%lrSubDiag)
       call heev(mH(:subSpaceDim,:subSpaceDim), evalInt, 'U', 'V')
-      call env%globalTimer%stopTimer(globalTimers%lrSubDiag)
+      !call env%globalTimer%stopTimer(globalTimers%lrSubDiag)
 
       ! This yields T=(A-B)^(-1/2)|X+Y>.
       ! Calc. |R_n>=|X+Y>=(A-B)^(1/2)T and |L_n>=|X-Y>=(A-B)^(-1/2)T.
@@ -1624,11 +1628,41 @@ contains
       ! Need |X-Y>=sqrt(w)(A-B)^(-1/2)T, |X+Y>=(A-B)^(1/2)T/sqrt(w) for proper solution to original
       ! EV problem, only use first nExc vectors
       do ii = 1, nExc
+        write(11,'(2x,i3,2x,f16.8)') ii, evalInt(ii)
         dummyReal = sqrt(sqrt(evalInt(ii)))
         evecR(:,ii) = evecR(:,ii) / dummyReal
         evecL(:,ii) = evecL(:,ii) * dummyReal
       end do
+      
+     
+      ! call symm(mMP(:subSpaceDim,:subSpaceDim), 'L', mM(:subSpaceDim,:subSpaceDim),& 
+      !     & mP(:subSpaceDim,:subSpaceDim), uplo='U')
 
+      ! call geev(mMP(:subSpaceDim,:subSpaceDim), evalInt, evalIntIm,&
+      !     & evecL(:subSpaceDim,:subSpaceDim), evecR(:subSpaceDim,:subSpaceDim), info)
+      
+      ! call index_heap_sort(indEval(:subSpaceDim), evalInt(:subSpaceDim))
+      ! evalInt(:subSpaceDim) = evalInt(indEval(:subSpaceDim))
+      ! evecR(:subSpaceDim,:subSpaceDim) = evecR(:subSpaceDim,indEval(:subSpaceDim))
+      ! evecL(:subSpaceDim,:subSpaceDim) = evecL(:subSpaceDim,indEval(:subSpaceDim))
+
+      ! do ii = 1, nExc
+      !   dummyReal = dot_product(evecL(:subSpaceDim,ii), evecR(:subSpaceDim,ii))
+      !   evecL(:subSpaceDim,ii) = evecL(:subSpaceDim,ii) / dummyReal
+      ! enddo      
+
+      ! call symm(dummyM(:subSpaceDim,:nExc), 'L', mM(:subSpaceDim,:subSpaceDim),& 
+      !     & evecL(:subSpaceDim,:nExc), uplo='U')
+      
+      ! do ii = 1, nExc
+      !   dummyReal = dot_product(evecR(:subSpaceDim,ii), dummyM(:subSpaceDim,ii)) / sqrt(evalInt(ii))
+      !   dummyReal2 = dot_product(evecR(:subSpaceDim,ii), evecR(:subSpaceDim,ii))
+      !   evecR(:subSpaceDim,ii) = evecR(:subSpaceDim,ii) * sqrt(dummyReal/dummyReal2)
+      !   evecL(:subSpaceDim,ii) = evecL(:subSpaceDim,ii) * sqrt(dummyReal2/dummyReal)
+      ! end do
+      
+      call env%globalTimer%stopTimer(globalTimers%lrSubDiag)
+      
       !see if more memory is needed to save extended basis. If so increase amount of memory.
       if (subSpaceDim + 2 * nExc > memDim) then
         call incMemStratmann(memDim, workDim, vecB, vP, vM, mP, mM, mH, mMsqrt, mMsqrtInv, &
