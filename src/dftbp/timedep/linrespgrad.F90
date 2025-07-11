@@ -700,17 +700,17 @@ contains
 
       end if
 
-      if (this%tSpin) then
-        if (any( abs(filling) > elecTolMax .and. abs(filling-1.0_dp) > elecTolMax ) ) then
-          call error("Fractional fillings not currently possible for excited state property&
-              & calculations")
-        end if
-      else
-        if (any( abs(filling) > elecTolMax .and. abs(filling-2.0_dp) > elecTolMax ) ) then
-          call error("Fractional fillings not currently possible for excited state property&
-              & calculations")
-        end if
-      end if
+      ! if (this%tSpin) then
+      !   if (any( abs(filling) > elecTolMax .and. abs(filling-1.0_dp) > elecTolMax ) ) then
+      !     call error("Fractional fillings not currently possible for excited state property&
+      !         & calculations")
+      !   end if
+      ! else
+      !   if (any( abs(filling) > elecTolMax .and. abs(filling-2.0_dp) > elecTolMax ) ) then
+      !     call error("Fractional fillings not currently possible for excited state property&
+      !         & calculations")
+      !   end if
+      ! end if
 
       ! Arrays needed for Z vector
       allocate(t(norb, norb, nSpin))
