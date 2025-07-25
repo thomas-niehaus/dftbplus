@@ -386,6 +386,24 @@ contains
     logical :: updwn
     real(dp) :: docc_ij
 
+    logical :: doT = .true.
+
+    if (doT) then
+      do ia = 1, nmat
+        ii = getIA(ia,1)
+        jj = getIA(ia,2)
+        updwn = (win(ia) <= nmatup)
+        if (updwn) then
+          docc_ij  = occNr(ii, 1) * (1 - occNr(jj, 1))
+        else
+          docc_ij = occNr(ii, 2) * (1 - occNr(jj, 2))
+        end if
+        if (.not. tSpin) then
+          docc_ij = (occNr(ii, 1)/2) * (1 - (occNr(jj, 1)/2))
+        end if
+        n_ij(ia) = sqrt(docc_ij)
+      end do
+    else
     !$OMP PARALLEL DO DEFAULT(SHARED) PRIVATE(ia, ii, jj, updwn, docc_ij) SCHEDULE(RUNTIME)
     do ia = 1, nmat
       call indxov(win, ia, getIA, ii, jj, ss)
@@ -401,7 +419,7 @@ contains
       n_ij(ia) = sqrt(docc_ij)
     end do
     !$OMP END PARALLEL DO
-
+    endif
   end subroutine getSqrOcc
 
 
@@ -1188,7 +1206,10 @@ contains
       call getOnsME(orb, iSp, lr%OnsiteMatrixElements, nOrb, onsite)
       do ia = 1, nmat
         iaGlb = ia + iOff
-        call indxov(rpa%win, iaGlb, rpa%getIA, ii, jj, ss)
+        !!call indxov(rpa%win, iaGlb, rpa%getIA, ii, jj, ss)
+        ii = rpa%getIA(rpa%win(iaGlb),1)
+        jj = rpa%getIA(rpa%win(iaGlb),2)
+        ss = rpa%getIA(rpa%win(iaGlb),3)
         updwn = (rpa%win(iaGlb) <= rpa%nxov_ud(1))
 
       #:if WITH_SCALAPACK
@@ -1239,7 +1260,10 @@ contains
 
     do ia = 1, nmat
       iaGlb = ia + iOff
-      call indxov(rpa%win, iaGlb, rpa%getIA, ii, jj, ss)
+      !!call indxov(rpa%win, iaGlb, rpa%getIA, ii, jj, ss)
+      ii = rpa%getIA(rpa%win(iaGlb),1)
+      jj = rpa%getIA(rpa%win(iaGlb),2)
+      ss = rpa%getIA(rpa%win(iaGlb),3)
       updwn = (rpa%win(iaGlb) <= rpa%nxov_ud(1))
       do iAt = 1, lr%nAtom
         nOrb = orb%nOrbAtom(iAt)
@@ -1300,14 +1324,26 @@ contains
 
     ind = 0
 
+    ! do iSpin = 1, nSpin
+    !   do ii = 1, norb - 1
+    !     do aa = ii, norb
+    !       !!if (filling(ii, iSpin) > filling(aa, iSpin) + elecTolMax) then
+    !         if(filling(ii,iSpin) * nSpin >= 1.0_dp .and. filling(aa,iSpin) * nSpin <= 1.0_dp) then
+    !           ind = ind + 1
+    !           wij(ind) = grndEigVal(aa, iSpin) - grndEigVal(ii, iSpin)
+    !           getIA(ind,:) = [ii, aa, iSpin]
+    !         end if
+    !       !!end if
+    !     end do
+    !   end do
+    ! end do
+
     do iSpin = 1, nSpin
-      do ii = 1, norb - 1
-        do aa = ii, norb
-          if (filling(ii, iSpin) > filling(aa, iSpin) + elecTolMax) then
-            ind = ind + 1
-            wij(ind) = grndEigVal(aa, iSpin) - grndEigVal(ii, iSpin)
-            getIA(ind,:) = [ii, aa, iSpin]
-          end if
+      do ii = 1, nOcc(iSpin)
+        do aa = nOcc(iSpin) + 1, norb
+          ind = ind + 1
+          wij(ind) = grndEigVal(aa, iSpin) - grndEigVal(ii, iSpin)
+          getIA(ind,:) = [ii, aa, iSpin]
         end do
       end do
     end do
@@ -1551,11 +1587,17 @@ contains
       s_iaja = 0.0_dp
       do k = 1, nmat
         ia = TDvin(k)
-        call indxov(rpa%win, ia, rpa%getIA, ii, aa, ss)
+        !!call indxov(rpa%win, ia, rpa%getIA, ii, aa, ss)
+        ii = rpa%getIA(rpa%win(ia),1)
+        aa = rpa%getIA(rpa%win(ia),2)
+        ss = rpa%getIA(rpa%win(ia),3)
         ud_ia = (rpa%win(ia) <= rpa%nxov_ud(1))
         do l = 1, nmat
           jb = TDvin(l)
-          call indxov(rpa%win, jb, rpa%getIA, jj, bb, ss)
+          !!call indxov(rpa%win, jb, rpa%getIA, jj, bb, ss)
+          jj = rpa%getIA(rpa%win(jb),1)
+          bb = rpa%getIA(rpa%win(jb),2)
+          ss = rpa%getIA(rpa%win(jb),3)
           ud_jb = (rpa%win(jb) <= rpa%nxov_ud(1))
 
           if ((bb /= aa) .or. (ud_jb .neqv. ud_ia)) cycle
@@ -1581,11 +1623,17 @@ contains
       s_iaib = 0.0_dp
       do k = 1, nmat
         ia = TDvin(k)
-        call indxov(rpa%win, ia, rpa%getIA, ii, aa, ss)
+        !!call indxov(rpa%win, ia, rpa%getIA, ii, aa, ss)
+        ii = rpa%getIA(rpa%win(ia),1)
+        aa = rpa%getIA(rpa%win(ia),2)
+        ss = rpa%getIA(rpa%win(ia),3)
         ud_ia = (rpa%win(ia) <= rpa%nxov_ud(1))
         do l = 1, nmat
           jb = TDvin(l)
-          call indxov(rpa%win, jb, rpa%getIA, jj, bb, ss)
+          !!call indxov(rpa%win, jb, rpa%getIA, jj, bb, ss)
+          jj = rpa%getIA(rpa%win(jb),1)
+          bb = rpa%getIA(rpa%win(jb),2)
+          ss = rpa%getIA(rpa%win(jb),3)
           ud_jb = (rpa%win(jb) <= rpa%nxov_ud(1))
 
           if ((ii /= jj) .or. (ud_jb .neqv. ud_ia)) cycle
@@ -1611,12 +1659,18 @@ contains
       s_iajb = 0.0_dp
       do k = 1, nmat
         ia = TDvin(k)
-        call indxov(rpa%win, ia, rpa%getIA, ii, aa, ss)
+        !!call indxov(rpa%win, ia, rpa%getIA, ii, aa, ss)
+        ii = rpa%getIA(rpa%win(ia),1)
+        aa = rpa%getIA(rpa%win(ia),2)
+        ss = rpa%getIA(rpa%win(ia),3)
         ud_ia = (rpa%win(ia) <= rpa%nxov_ud(1))
         if (.not. ud_ia) cycle
         do l = 1, nmat
           jb = TDvin(l)
-          call indxov(rpa%win, jb, rpa%getIA, jj, bb, ss)
+          !!call indxov(rpa%win, jb, rpa%getIA, jj, bb, ss)
+          jj = rpa%getIA(rpa%win(jb),1)
+          bb = rpa%getIA(rpa%win(jb),2)
+          ss = rpa%getIA(rpa%win(jb),3)
           ud_jb = (rpa%win(jb) <= rpa%nxov_ud(1))
 
           if (ud_jb) cycle
@@ -1661,7 +1715,10 @@ contains
       write(fdSPTrans%unit, '(1x,58("="))')
       write(fdSPTrans%unit, *)
       do indm = 1, rpa%nxov_rd
-        call indxov(rpa%win, indm, rpa%getIA, m, n, s)
+        !!call indxov(rpa%win, indm, rpa%getIA, m, n, s)
+        m = rpa%getIA(rpa%win(indm),1)
+        n = rpa%getIA(rpa%win(indm),2)
+        s = rpa%getIA(rpa%win(indm),3)
         sign = " "
         if (lr%tSpin) then
           updwn = (rpa%win(indm) <= rpa%nxov_ud(1))

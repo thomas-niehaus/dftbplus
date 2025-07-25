@@ -12,7 +12,7 @@
 !! Note: This module is NOT instance safe it uses a common block to communicate with ARPACK
 module dftbp_timedep_linrespgrad
   use dftbp_common_accuracy, only : dp, elecTolMax, lc, rsp
-  use dftbp_common_constants, only : au__Debye, cExchange, Hartree__eV
+  use dftbp_common_constants, only : au__Debye, cExchange, Hartree__eV, Boltzmann
   use dftbp_common_environment, only : globalTimers, TEnvironment
   use dftbp_common_file, only : clearFile, closeFile, openFile, TFileDescr
   use dftbp_common_globalenv, only : stdOut
@@ -87,8 +87,8 @@ contains
   !! based on Time Dependent DFRT
   subroutine LinRespGrad_old(env, this, denseDesc, grndEigVecs, grndEigVal, sccCalc, dq, coord0,&
       & SSqr, filling, species0, iNeighbour, img2CentCell, orb, fdTagged, taggedWriter, hybridXc,&
-      & omega, allOmega, deltaRho, shift, skHamCont, skOverCont, excgrad, nacv, derivator, rhoSqr,&
-      & occNatural, naturalOrbs)
+      & tempElec, omega, allOmega, deltaRho, shift, skHamCont, skOverCont, excgrad, nacv, derivator,&
+      & rhoSqr, occNatural, naturalOrbs)
 
     !> Environment settings
     type(TEnvironment), intent(inout) :: env
@@ -140,6 +140,9 @@ contains
     !> Data for hybrid xc-functional calculation
     class(THybridXcFunc), allocatable, intent(inout) :: hybridXc
 
+    !> Electronic temperature
+    real(dp), intent(out) :: tempElec    
+
     !> Excitation energy of state nStat
     real(dp), intent(out) :: omega
 
@@ -184,12 +187,14 @@ contains
     real(dp), allocatable :: xpy(:,:), xmy(:,:), sqrOccIA(:)
     real(dp), allocatable :: xpym(:), xpyn(:), xmyn(:), xmym(:)
     real(dp), allocatable :: t(:,:,:), rhs(:), woo(:,:), wvv(:,:), wov(:)
-    real(dp), allocatable :: eval(:), transitionDipoles(:,:)
+    real(dp), allocatable :: eval(:), transitionDipoles(:,:), occTemp(:,:)
     integer, allocatable :: win(:), getIA(:,:), getIJ(:,:), getAB(:,:)
 
     !> Array from pairs of single particles states to compound index - should replace with a more
     !> compact data structure in the cases where there are oscilator windows
     integer, allocatable :: iatrans(:,:,:)
+    integer :: ias, a, s, nDegOrb, iDegOrb
+    real(dp) :: gooj, eMermin, elecTmp, kb, hocc
 
     character, allocatable :: symmetries(:)
 
@@ -200,7 +205,7 @@ contains
     integer :: norb, nxoo, nxvv
     integer :: i, j, iSpin, isym, iLev, iSav, nStartLev, nEndLev
     integer :: nCoupLev, mCoupLev, iNac, iGlobal, fGlobal
-    integer :: nSpin
+    integer :: nSpin, ii, aa, ss
     character :: sym
     character(lc) :: tmpStr
 
@@ -300,41 +305,72 @@ contains
         end if
       end do
     end do
-    if (tFracOcc .and. tHybridXc) then
-      call error('Fractional occupations not implemented for TD-LC-DFTB.')
-    end if
+    ! if (tFracOcc .and. tHybridXc) then
+    !   call error('Fractional occupations not implemented for TD-LC-DFTB.')
+    ! end if
 
-    ! count initial number of transitions from occupied to empty states
-    allocate(nxov_ud(nSpin))
-    nxov_ud = 0
-    do iSpin = 1, nSpin
-      !$OMP PARALLEL DO DEFAULT(SHARED) PRIVATE(i,j) SCHEDULE(RUNTIME) REDUCTION(+:nxov_ud)
-      do i = 1, norb - 1
-        do j = i, norb
-          if (filling(i,iSpin) > filling(j,iSpin) + elecTolMax) then
-            nxov_ud(iSpin) = nxov_ud(iSpin) + 1
-          end if
-        end do
-      end do
-      !$OMP  END PARALLEL DO
-    end do
-    nxov = sum(nxov_ud)
+    ! ! count initial number of transitions from occupied to empty states
+    ! allocate(nxov_ud(nSpin))
+    ! nxov_ud = 0
+    ! do iSpin = 1, nSpin
+    !   !$OMP PARALLEL DO DEFAULT(SHARED) PRIVATE(i,j) SCHEDULE(RUNTIME) REDUCTION(+:nxov_ud)
+    !   do i = 1, norb - 1
+    !     do j = i, norb
+    !       !!if (filling(i,iSpin) > filling(j,iSpin) + elecTolMax) then 
+    !         if(filling(i,iSpin) * nSpin >= 1.0_dp .and. filling(j,iSpin) * nSpin <= 1.0_dp) then
+    !           nxov_ud(iSpin) = nxov_ud(iSpin) + 1
+    !         end if
+    !       !!end if
+    !     end do
+    !   end do
+    !   !$OMP  END PARALLEL DO
+    ! end do
+    ! nxov = sum(nxov_ud)
+    ! print *,'The number of pairs is', nxov 
 
     ! # occupied/virtual states per spin channel
     allocate(nocc_ud(nSpin))
     allocate(nvir_ud(nSpin))
     nocc_ud(:) = 0
     nvir_ud(:) = 0
+    ! Bad hack for degeneracy problem
+
+    nDegOrb = 0
     do iSpin = 1, nSpin
       do i = 1, norb
-        if (filling(i,iSpin) > elecTolMax) then
+        if (abs(filling(i,iSpin) * nSpin -1.0_dp) < 100*elecTolMax) then
+          nDegOrb = nDegOrb + 1
+        end if
+      enddo
+    enddo
+
+    iDegOrb = 0
+    do iSpin = 1, nSpin
+      do i = 1, norb
+        !!if (filling(i,iSpin) > elecTolMax) then
+        if (abs(filling(i,iSpin) * nSpin -1.0_dp) < 100*elecTolMax) then
+          iDegOrb = iDegOrb + 1
+          if (iDegOrb <= nDegOrb/2) then
+            nocc_ud(iSpin) = nocc_ud(iSpin) + 1
+          else
+            nvir_ud(iSpin) = nvir_ud(iSpin) + 1
+          end if
+        else if (filling(i,iSpin) * nSpin >= 1.0_dp) then
           nocc_ud(iSpin) = nocc_ud(iSpin) + 1
         else
           nvir_ud(iSpin) = nvir_ud(iSpin) + 1
         end if
       end do
     end do
-
+    print *,'The number of occupied levels is ',  nocc_ud(1)
+    print *,'The number of virtual  levels is ',  nvir_ud(1)
+    allocate(nxov_ud(nSpin))
+    do iSpin = 1, nSpin
+      nxov_ud(iSpin) = nocc_ud(iSpin) * nvir_ud(iSpin)
+    end do
+    nxov = sum(nxov_ud)
+    print *,'The number of pairs is', nxov 
+    
     mHOMO = maxval(nocc_ud)
     mLUMO = minval(nocc_ud) + 1
 
@@ -545,6 +581,27 @@ contains
     ! set up transition indexing
     allocate(iatrans(norb, norb, nSpin))
     call rindxov_array(win, nxov, nxoo, nxvv, getIA, getIJ, getAB, iatrans)
+    print *,'The ov'
+    do ias = 1, nxov_rd
+      ii = getIA(win(ias), 1)
+      aa = getIA(win(ias), 2)
+      ss = getIA(win(ias), 3)
+      write(*,'(2x,i3,2x,i3,2x,i3,2x,i3,2x,i3)') ias, ii, aa, ss, iatrans(ii,aa,ss)
+    enddo
+    print *,'The oo'
+    do ias = 1, nxoo_ud(1)
+      ii = getIJ(ias, 1)
+      aa = getIJ(ias, 2)
+      ss = getIJ(ias, 3)
+      write(*,'(2x,i3,2x,i3,2x,i3,2x,i3,2x,i3)') ias, ii, aa, ss, iatrans(ii,aa,ss)
+    enddo
+    print *,'The vv'
+    do ias = 1, nxvv_ud(1)
+      ii = getAB(ias, 1)
+      aa = getAB(ias, 2)
+      ss = getAB(ias, 3)
+      write(*,'(2x,i3,2x,i3,2x,i3,2x,i3,2x,i3)') ias, ii, aa, ss, iatrans(ii,aa,ss)
+    enddo    
 
     ! MPI distribution of RPA vectors according to these indices
     call distributeRangeInChunks(env, 1, nxov_rd, iGlobal, fGlobal)
@@ -622,6 +679,37 @@ contains
       call getOscillatorStrengths(this, rpa, sym, eval, xpy, snglPartTransDip(1:rpa%nxov_rd,:),&
           & nstat, osz, transitionDipoles)
 
+      allocate(occTemp(size(filling), nSpin))
+      occTemp = 0.0_dp
+      print *,'The temperature is ', tempElec/Boltzmann
+      print *,'Index max is', rpa%nxov_rd
+      do ias = 1, rpa%nxov_rd
+        !call indxov(rpa%win, ias, rpa%getIA, i, a, s)
+        i = rpa%getIA(rpa%win(ias),1)
+        a = rpa%getIA(rpa%win(ias),2)
+        s = rpa%getIA(rpa%win(ias),3)
+        occTemp(i, s) = occTemp(i, s) - 0.5_dp * xpy(ias,nstat) * xmy(ias,nstat)
+        occTemp(a, s) = occTemp(a, s) + 0.5_dp * xpy(ias,nstat) * xmy(ias,nstat) 
+      end do
+      
+      if (nSpin == 2) then
+        occTemp = occTemp + filling
+      else
+        occTemp = 2.0_dp*occTemp + filling
+      endif
+      do ias = 1, size(filling, dim=1)
+        write(13,'(2x,i3,2x,f10.8,2x,f10.8)') ias,filling(ias,1),occTemp(ias,1)
+      enddo
+
+      eMermin = 0.0_dp
+      do ias = 1, size(filling, dim=1)
+        hocc = occTemp(ias,1)/2._dp
+        if (hocc > 1.d-8 .and. (1-hocc)  > 1.d-8) then
+          eMermin = eMermin +  hocc * log(hocc) + (1-hocc)*log(1-hocc) 
+        end if 
+      enddo
+      eMermin = 2.0_dp * eMermin * tempElec 
+
       ! Transition charges for state nstat
       if (this%writeTransQ) then
         call getAndWriteTransitionCharges(env, this, rpa, transChrg, sym, denseDesc, ovrXev,&
@@ -654,6 +742,8 @@ contains
 
     end do
 
+    !! Compute excited state occupations
+    
     call closeFile(fdTrans)
     call closeFile(fdXPlusY)
     call closeFile(fdTransDip)
@@ -889,7 +979,9 @@ contains
     if (nstat == 0) then
       omega = 0.0_dp
     else
-      omega = sqrt(eval(nstat))
+      omega = sqrt(eval(nstat)) + 0.5*eMermin
+      write(14,'(2x,f16.8)') 0.5*eMermin
+      !!omega = sqrt(eval(nstat))
     end if
 
   end subroutine LinRespGrad_old
@@ -1629,7 +1721,10 @@ contains
     ! and w_ab = Q_ab with Q_ab as in (B16) but with corrected sign.
     ! factor 1 / (1 + delta_ab) follows later
     do ias = 1, nxov
-      call indxov(rpa%win, ias, rpa%getIA, i, a, s)
+      !!call indxov(rpa%win, ias, rpa%getIA, i, a, s)
+      i = rpa%getIA(rpa%win(ias),1)
+      a = rpa%getIA(rpa%win(ias),2)
+      s = rpa%getIA(rpa%win(ias),3)
 
       ! BA: is T_aa = 0?
       do b = rpa%nocc_ud(s) + 1, a
@@ -1649,6 +1744,7 @@ contains
       ! Build t_ij = 0.5 * sum_a (X+Y)_ia (X+Y)_ja + (X-Y)_ia (X-Y)_ja and 1 / (1 + delta_ij) Q_ij
       ! with Q_ij as in eq. (B9) (1st part of w_ij)
       do j = i, rpa%nocc_ud(s)
+        
         jas = rpa%iaTrans(j,a,s)
 
         ! ADG: assume no constraint on occ space atm (nocc_r = nocc)
@@ -1711,7 +1807,10 @@ contains
 
     ! rhs(ia) -= Qia = sum_b (X+Y)_ib * qgamxpyq(ab))
     do ias = 1, nxov
-      call indxov(rpa%win, ias, rpa%getIA, i, a, s)
+      !!call indxov(rpa%win, ias, rpa%getIA, i, a, s)
+      i = rpa%getIA(rpa%win(ias),1)
+      a = rpa%getIA(rpa%win(ias),2)
+      s = rpa%getIA(rpa%win(ias),3)
 
       do b = rpa%nocc_ud(s) + 1, a
         ab = rpa%iaTrans(a, b, s) - svv(s)
@@ -1764,7 +1863,10 @@ contains
     ! rhs(ia) += Qai = sum_j (X+Y)_ja qgamxpyq(ij)
     ! add Qai to Wia as well.
     do ias = 1, nxov
-      call indxov(rpa%win, ias, rpa%getIA, i, a, s)
+      !!call indxov(rpa%win, ias, rpa%getIA, i, a, s)
+      i = rpa%getIA(rpa%win(ias),1)
+      a = rpa%getIA(rpa%win(ias),2)
+      s = rpa%getIA(rpa%win(ias),3)          
       do j = i, rpa%nocc_ud(s)
         jas = rpa%iaTrans(j, a, s)
         ij = rpa%iaTrans(i, j, s) - soo(s)
@@ -1888,7 +1990,10 @@ contains
 
       do ias = 1, nxov
 
-        call indXov(rpa%win, ias, rpa%getIA, i, a, s)
+        !!call indXov(rpa%win, ias, rpa%getIA, i, a, s)
+        i = rpa%getIA(rpa%win(ias),1)
+        a = rpa%getIA(rpa%win(ias),2)
+        s = rpa%getIA(rpa%win(ias),3)
         do b = rpa%nocc_ud(s) + 1, nOrb
           ibs = rpa%iaTrans(i, b, s)
           abs = rpa%iaTrans(a, b, s)
@@ -2005,7 +2110,10 @@ contains
       if (rpa%tHybridXc) then
         call hemv(qTmp, lrGamma, qTr)
         rs = rs - cExchange * dot_product(qTr, qTmp)
-        call indXov(rpa%win, ia, rpa%getIA, i, a, s)
+        !!call indXov(rpa%win, ia, rpa%getIA, i, a, s)
+        i = rpa%getIA(rpa%win(ia),1)
+        a = rpa%getIA(rpa%win(ia),2)
+        s = rpa%getIA(rpa%win(ia),3)
         iis = rpa%iaTrans(i, i, s)
         qTr(:) = transChrg%qTransIJ(iis, env, denseDesc, ovrXev, grndEigVecs, rpa%getIJ)
         call hemv(qTmp, lrGamma, qTr)
@@ -2144,7 +2252,10 @@ contains
 
     ! Adding missing epsilon_i * Z_ia term to W_ia
     do ias = 1, rpa%nxov_rd
-      call indxov(rpa%win, ias, rpa%getIA, i, a, s)
+      !!call indxov(rpa%win, ias, rpa%getIA, i, a, s)
+      i = rpa%getIA(rpa%win(ias),1)
+      a = rpa%getIA(rpa%win(ias),2)
+      s = rpa%getIA(rpa%win(ias),3)
       wov(ias) = wov(ias) + zz(ias) * grndEigVal(i, s)
     end do
 
@@ -2526,7 +2637,10 @@ contains
     ! xpycc(mu, nu) += sum_ia (X+Y)_ia grndEigVecs(mu,a) grndEigVecs(nu,i)
     xpycc(:,:,:) = 0.0_dp
     do ia = 1, rpa%nxov_rd
-      call indxov(rpa%win, ia, rpa%getIA, i, a, iSpin)
+      !!call indxov(rpa%win, ia, rpa%getIA, i, a, iSpin)
+      i = rpa%getIA(rpa%win(ia),1)
+      a = rpa%getIA(rpa%win(ia),2)
+      iSpin = rpa%getIA(rpa%win(ia),3)
       ! should replace with DSYR2 call :
       do nu = 1, nOrb
         do mu = 1, nOrb
@@ -2544,7 +2658,10 @@ contains
       xpyas(:,:,:) = 0.0_dp
       xmyas(:,:,:) = 0.0_dp
       do ia = 1, rpa%nxov_rd
-        call indxov(rpa%win, ia, rpa%getIA, i, a, iSpin)
+        !!call indxov(rpa%win, ia, rpa%getIA, i, a, iSpin)
+        i = rpa%getIA(rpa%win(ia),1)
+        a = rpa%getIA(rpa%win(ia),2)
+        iSpin = rpa%getIA(rpa%win(ia),3)
         ! should replace with DSYR2 call:
         do nu = 1, nOrb
           do mu = 1, nOrb
@@ -2607,7 +2724,10 @@ contains
 
     ! calculate the occ-virt part : the same way as for xpycc
     do ia = 1, rpa%nxov_rd
-      call indxov(rpa%win, ia, rpa%getIA, i, a, iSpin)
+      !!call indxov(rpa%win, ia, rpa%getIA, i, a, iSpin)
+      i = rpa%getIA(rpa%win(ia),1)
+      a = rpa%getIA(rpa%win(ia),2)
+      iSpin = rpa%getIA(rpa%win(ia),3)
       ! again replace with DSYR2 call :
       do nu = 1, nOrb
         do mu = 1, nOrb
@@ -2999,7 +3119,10 @@ contains
         weight = wvec(1)
         iweight = wvin(1)
 
-        call indxov(rpa%win, iweight, rpa%getIA, m, n, s)
+        !!call indxov(rpa%win, iweight, rpa%getIA, m, n, s)
+        m = rpa%getIA(rpa%win(iweight),1)
+        n = rpa%getIA(rpa%win(iweight),2)
+        s = rpa%getIA(rpa%win(iweight),3)
         sign = sym
         if (fdExc%isConnected()) then
           if (lr%tSpin) then
@@ -3038,7 +3161,10 @@ contains
           do jj = 1, nmat
             !if (wvec(jj) < 1e-4_dp) exit ! ??????
             indo = wvin(jj)
-            call indxov(rpa%win, indo, rpa%getIA, m, n, s)
+            !!call indxov(rpa%win, indo, rpa%getIA, m, n, s)
+            m = rpa%getIA(rpa%win(indo),1)
+            n = rpa%getIA(rpa%win(indo),2)
+            s = rpa%getIA(rpa%win(indo),3)
             if (tSpin) then
               updwn = (rpa%win(indo) <= rpa%nxov_ud(1))
               sign = "D"
@@ -3065,7 +3191,10 @@ contains
 
         weight = wvec(1)
         iweight = wvin(1)
-        call indxov(rpa%win, iWeight, rpa%getIA, m, n, s)
+        !!call indxov(rpa%win, iWeight, rpa%getIA, m, n, s)
+        m = rpa%getIA(rpa%win(iWeight),1)
+        n = rpa%getIA(rpa%win(iWeight),2)
+        s = rpa%getIA(rpa%win(iWeight),3)
         sign = sym
 
         if (fdExc%isConnected()) then
@@ -3164,7 +3293,10 @@ contains
 
     pc(:,:,:) = 0.0_dp
     do ias = 1, size(rhs)
-      call indxov(rpa%win, ias, rpa%getIA, i, a, s)
+      !!call indxov(rpa%win, ias, rpa%getIA, i, a, s)
+      i = rpa%getIA(rpa%win(ias),1)
+      a = rpa%getIA(rpa%win(ias),2)
+      s = rpa%getIA(rpa%win(ias),3)
       pc(i,a,s) = rhs(ias)
     end do
 
@@ -3227,7 +3359,10 @@ contains
 
     qX(:,:) = 0.0_dp
     do ias = 1, rpa%nxov_rd
-      call indXov(rpa%win, ias, rpa%getIA, i, a, s)
+      !!call indXov(rpa%win, ias, rpa%getIA, i, a, s)
+      i = rpa%getIA(rpa%win(ias),1)
+      a = rpa%getIA(rpa%win(ias),2)
+      s = rpa%getIA(rpa%win(ias),3)
       do b = rpa%nocc_ud(s) + 1, nOrb
         ibs = rpa%iaTrans(i, b, s)
         abs = rpa%iaTrans(a, b, s)
@@ -3309,7 +3444,10 @@ contains
 
     qX(:,:) = 0.0_dp
     do ias = 1, rpa%nxov_rd
-      call indXov(rpa%win, ias, rpa%getIA, i, a, s)
+      !!call indXov(rpa%win, ias, rpa%getIA, i, a, s)
+      i = rpa%getIA(rpa%win(ias),1)
+      a = rpa%getIA(rpa%win(ias),2)
+      s = rpa%getIA(rpa%win(ias),3)
       do j = 1, rpa%nocc_ud(s)
         jas = rpa%iaTrans(j, a, s)
         ijs = rpa%iaTrans(i, j, s)
@@ -3320,7 +3458,10 @@ contains
 
     Gq(:,:) = 0.0_dp
     do ias = 1, rpa%nxov_rd
-      call indXov(rpa%win, ias, rpa%getIA, i, a, s)
+      !!call indXov(rpa%win, ias, rpa%getIA, i, a, s)
+      i = rpa%getIA(rpa%win(ias),1)
+      a = rpa%getIA(rpa%win(ias),2)
+      s = rpa%getIA(rpa%win(ias),3)
       qIJ(:) = transChrg%qTransIA(ias, env, denseDesc, ovrXev, grndEigVecs, rpa%getIA, rpa%win)
       call hemv(gqIJ, lrGamma, qIJ, uplo='U')
       Gq(:,ias) = gqIJ
@@ -3389,7 +3530,10 @@ contains
 
     qX(:,:) = 0.0_dp
     do ias = 1, rpa%nxov_rd
-      call indXov(rpa%win, ias, rpa%getIA, i, a, s)
+      !!call indXov(rpa%win, ias, rpa%getIA, i, a, s)
+      i = rpa%getIA(rpa%win(ias),1)
+      a = rpa%getIA(rpa%win(ias),2)
+      s = rpa%getIA(rpa%win(ias),3)
       do b = rpa%nocc_ud(s) + 1, nOrb
         ibs = rpa%iaTrans(i, b, s)
         qIJ(:) = transChrg%qTransIA(ibs, env, denseDesc, ovrXev, grndEigVecs, rpa%getIA, rpa%win)
@@ -3406,7 +3550,10 @@ contains
 
     vecHovT(:) = 0.0_dp
     do ias = 1, rpa%nxov_rd
-      call indXov(rpa%win, ias, rpa%getIA, i, a, s)
+      !!call indXov(rpa%win, ias, rpa%getIA, i, a, s)
+      i = rpa%getIA(rpa%win(ias),1)
+      a = rpa%getIA(rpa%win(ias),2)
+      s = rpa%getIA(rpa%win(ias),3)
       do b = rpa%nocc_ud(s) + 1, nOrb
         ibs = rpa%iaTrans(i, b, s)
         abs = rpa%iaTrans(a, b, s)
@@ -3416,7 +3563,10 @@ contains
 
     qX(:,:) = 0.0_dp
     do ias = 1, rpa%nxov_rd
-      call indXov(rpa%win, ias, rpa%getIA, i, a, s)
+      !!call indXov(rpa%win, ias, rpa%getIA, i, a, s)
+      i = rpa%getIA(rpa%win(ias),1)
+      a = rpa%getIA(rpa%win(ias),2)
+      s = rpa%getIA(rpa%win(ias),3)
       do j = 1, rpa%nocc_ud(s)
         jas = rpa%iaTrans(j, a, s)
         qIJ(:) = transChrg%qTransIA(jas, env, denseDesc, ovrXev, grndEigVecs, rpa%getIA, rpa%win)
@@ -3435,7 +3585,10 @@ contains
     end do
 
     do ias = 1, rpa%nxov_rd
-      call indXov(rpa%win, ias, rpa%getIA, i, a, s)
+      !!call indXov(rpa%win, ias, rpa%getIA, i, a, s)
+      i = rpa%getIA(rpa%win(ias),1)
+      a = rpa%getIA(rpa%win(ias),2)
+      s = rpa%getIA(rpa%win(ias),3)
       do j = 1, rpa%nocc_ud(s)
         jas = rpa%iaTrans(j, a, s)
         ijs = rpa%iaTrans(i, j, s)
@@ -3496,7 +3649,10 @@ contains
 
     qX(:,:) = 0.0_dp
     do ias = 1, rpa%nxov_rd
-      call indXov(rpa%win, ias, rpa%getIA, i, a, s)
+      !!call indXov(rpa%win, ias, rpa%getIA, i, a, s)
+      i = rpa%getIA(rpa%win(ias),1)
+      a = rpa%getIA(rpa%win(ias),2)
+      s = rpa%getIA(rpa%win(ias),3)
       do b = rpa%nocc_ud(s) + 1, nOrb
         ibs = rpa%iaTrans(i, b, s)
         qIJ(:) = transChrg%qTransIA(ibs, env, denseDesc, ovrXev, grndEigVecs, rpa%getIA, rpa%win)
@@ -3777,7 +3933,10 @@ contains
     ! "Fake" density matrix for non-adiabatic coupling [Furche JCP 132 044107 (2010)]
     ! Restricted KS: P = 2 P^up ; (X+Y) = sqrt(2) (X+Y)^up
     do ias = 1, rpa%nxov_rd
-      call indxov(rpa%win, ias, rpa%getIA, i, a, s)
+      !!call indxov(rpa%win, ias, rpa%getIA, i, a, s)
+      i = rpa%getIA(rpa%win(ias),1)
+      a = rpa%getIA(rpa%win(ias),2)
+      s = rpa%getIA(rpa%win(ias),3)
       p(ias) = sqrt(2.0_dp) * xpy(ias)
       wov(ias) = grndEigVal(i, s) * p(ias) + omega * xmy(ias) / sqrt(2.0_dp)
     end do
@@ -3785,7 +3944,10 @@ contains
     ! Define P symmetrically (similar to treatment of excited state gradients)
     pc(:,:,:) = 0.0_dp
     do ias = 1, rpa%nxov_rd
-      call indxov(rpa%win, ias, rpa%getIA, i, a, s)
+      !!call indxov(rpa%win, ias, rpa%getIA, i, a, s)
+      i = rpa%getIA(rpa%win(ias),1)
+      a = rpa%getIA(rpa%win(ias),2)
+      s = rpa%getIA(rpa%win(ias),3)
       pc(i,a,s) = 0.5_dp * p(ias)
       pc(a,i,s) = 0.5_dp * p(ias)
     end do
@@ -3945,7 +4107,10 @@ contains
     ! We are symmetrizing the non-symmetric T of Furche
     ! Factor 1 / (1 + delta_ab) for W follows later
     do ias = 1, nxov
-      call indxov(rpa%win, ias, rpa%getIA, i, a, s)
+      !!call indxov(rpa%win, ias, rpa%getIA, i, a, s)
+      i = rpa%getIA(rpa%win(ias),1)
+      a = rpa%getIA(rpa%win(ias),2)
+      s = rpa%getIA(rpa%win(ias),3)
 
       ! BA: is T_aa = 0?
       do b = rpa%nocc_ud(s) + 1, a
@@ -4004,7 +4169,10 @@ contains
         & gammaMat, xpyn, vecHoo=vecHooXorY, vecHvv=vecHvvXorY)
 
     do ias = 1, nxov
-      call indxov(rpa%win, ias, rpa%getIA, i, a, s)
+      !!call indxov(rpa%win, ias, rpa%getIA, i, a, s)
+      i = rpa%getIA(rpa%win(ias),1)
+      a = rpa%getIA(rpa%win(ias),2)
+      s = rpa%getIA(rpa%win(ias),3)
       do b = rpa%nocc_ud(s) + 1, a
         abs = rpa%iaTrans(a, b, s)
         ibs = rpa%iaTrans(i, b, s)
@@ -4037,7 +4205,10 @@ contains
         & gammaMat, xpym, vecHoo=vecHooXorY, vecHvv=vecHvvXorY)
 
     do ias = 1, nxov
-      call indxov(rpa%win, ias, rpa%getIA, i, a, s)
+      !!call indxov(rpa%win, ias, rpa%getIA, i, a, s)
+      i = rpa%getIA(rpa%win(ias),1)
+      a = rpa%getIA(rpa%win(ias),2)
+      s = rpa%getIA(rpa%win(ias),3)
       do b = rpa%nocc_ud(s) + 1, a
         abs = rpa%iaTrans(a, b, s)
         ibs = rpa%iaTrans(i, b, s)
@@ -4108,7 +4279,10 @@ contains
 
       do ias = 1, nxov
 
-        call indXov(rpa%win, ias, rpa%getIA, i, a, s)
+        !!call indXov(rpa%win, ias, rpa%getIA, i, a, s)
+        i = rpa%getIA(rpa%win(ias),1)
+        a = rpa%getIA(rpa%win(ias),2)
+        s = rpa%getIA(rpa%win(ias),3)
         do b = rpa%nocc_ud(s) + 1, nOrb
           ibs = rpa%iaTrans(i, b, s)
           abs = rpa%iaTrans(a, b, s)
@@ -4154,7 +4328,10 @@ contains
 
       do ias = 1, nxov
 
-        call indXov(rpa%win, ias, rpa%getIA, i, a, s)
+        !!call indXov(rpa%win, ias, rpa%getIA, i, a, s)
+        i = rpa%getIA(rpa%win(ias),1)
+        a = rpa%getIA(rpa%win(ias),2)
+        s = rpa%getIA(rpa%win(ias),3)
         do b = rpa%nocc_ud(s) + 1, nOrb
           ibs = rpa%iaTrans(i, b, s)
           abs = rpa%iaTrans(a, b, s)
@@ -4491,7 +4668,10 @@ contains
       ! xpycc(mu, nu) += sum_ia (X+Y)_ia grndEigVecs(mu,a) grndEigVecs(nu,i)
       xpycc(:,:,:,iState) = 0.0_dp
       do ia = 1, rpa%nxov_rd
-        call indxov(rpa%win, ia, rpa%getIA, i, a, iSpin)
+        !!call indxov(rpa%win, ia, rpa%getIA, i, a, iSpin)
+        i = rpa%getIA(rpa%win(ia),1)
+        a = rpa%getIA(rpa%win(ia),2)
+        iSpin = rpa%getIA(rpa%win(ia),3)
         ! Should replace with DSYR2 call:
         do nu = 1, nOrb
           do mu = 1, nOrb
@@ -4512,7 +4692,10 @@ contains
       do iState = 1,2
         ! Asymmetric contribution: xmycc_as = sum_ias (X-Y)_ias c_mas c_nis
         do ia = 1, rpa%nxov_rd
-          call indxov(rpa%win, ia, rpa%getIA, i, a, iSpin)
+          !!call indxov(rpa%win, ia, rpa%getIA, i, a, iSpin)
+          i = rpa%getIA(rpa%win(ia),1)
+          a = rpa%getIA(rpa%win(ia),2)
+          iSpin = rpa%getIA(rpa%win(ia),3)
           ! Should replace with DSYR2 call:
           do nu = 1, nOrb
             do mu = 1, nOrb
@@ -4585,6 +4768,9 @@ contains
     ! Calculate the occ-virt part: the same way as for xpycc
     do ia = 1, rpa%nxov_rd
       call indxov(rpa%win, ia, rpa%getIA, i, a, iSpin)
+      i = rpa%getIA(rpa%win(ia),1)
+      a = rpa%getIA(rpa%win(ia),2)
+      iSpin = rpa%getIA(rpa%win(ia),3)
       ! Again replace with DSYR2 call:
       do nu = 1, nOrb
         do mu = 1, nOrb

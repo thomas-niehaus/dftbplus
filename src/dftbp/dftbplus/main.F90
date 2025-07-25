@@ -1664,10 +1664,10 @@ contains
           & this%skHamCont, this%skOverCont, autotestTag, this%taggedWriter, this%runId,&
           & this%neighbourList, this%nNeighbourSK, this%denseDesc, this%iSparseStart,&
           & this%img2CentCell, this%tWriteAutotest, this%tCasidaForces, this%tLinRespZVect,&
-          & this%tPrintExcitedEigvecs, this%tPrintEigvecsTxt, this%nonSccDeriv,&
+          & this%tPrintExcitedEigvecs, this%tPrintEigvecsTxt, this%nonSccDeriv, this%tempElec,&
           & this%dftbEnergy(1), this%energiesCasida, this%SSqrReal, this%rhoSqrReal,&
-          & this%densityMatrix%deltaRhoOut, this%excitedDerivs, this%naCouplings, this%occNatural,&
-          & this%hybridXc)
+          & this%densityMatrix%deltaRhoOut, this%excitedDerivs, this%naCouplings, &
+          & this%occNatural, this%hybridXc)
       call env%globalTimer%stopTimer(globalTimers%lrExcitation)
     end if
 
@@ -5382,8 +5382,8 @@ contains
       & ints, eigvecsReal, eigen, filling, coord, species, speciesName, orb, skHamCont,&
       & skOverCont, autotestTag, taggedWriter, runId, neighbourList, nNeighbourSk, denseDesc,&
       & iSparseStart, img2CentCell, tWriteAutotest, tForces, tLinRespZVect, tPrintExcEigvecs,&
-      & tPrintExcEigvecsTxt, nonSccDeriv, dftbEnergy, energies, work, rhoSqrReal, deltaRhoOut,&
-      & excitedDerivs, naCouplings, occNatural, hybridXc)
+      & tPrintExcEigvecsTxt, nonSccDeriv, tempElec, dftbEnergy, energies, work, rhoSqrReal,&
+      & deltaRhoOut, excitedDerivs, naCouplings, occNatural, hybridXc)
 
     !> Environment settings
     type(TEnvironment), intent(inout) :: env
@@ -5475,6 +5475,9 @@ contains
     !> Method for calculating derivatives of S and H0
     type(TNonSccDiff), intent(in) :: nonSccDeriv
 
+    !> Electronic temperature
+    real(dp), intent(out) :: tempElec
+
     !> Energy contributions and total
     type(TEnergies), intent(inout) :: dftbEnergy
 
@@ -5549,9 +5552,9 @@ contains
       end if
       call LinResp_addGradients(env, tSpin, linearResponse, denseDesc, eigvecsReal, eigen,&
           & work, filling, coord(:,:nAtom), sccCalc, dQAtom, pSpecies0, neighbourList%iNeighbour,&
-          & img2CentCell, orb, skHamCont, skOverCont, fdAutotest, taggedWriter, hybridXc,&
-          & dftbEnergy%Eexcited, energies, excitedDerivs, naCouplings, nonSccDeriv, rhoSqrReal,&
-          & deltaRhoOut, occNatural, naturalOrbs)
+          & img2CentCell, orb, skHamCont, skOverCont, fdAutotest, taggedWriter, hybridXc, tempElec,&
+          & dftbEnergy%Eexcited, energies, excitedDerivs, naCouplings, nonSccDeriv,&
+          &  rhoSqrReal, deltaRhoOut, occNatural, naturalOrbs)
       if (tPrintExcEigvecs) then
         call writeRealEigvecs(env, runId, neighbourList, nNeighbourSK, denseDesc, iSparseStart,&
             & img2CentCell, pSpecies0, speciesName, orb, ints%overlap, parallelKS, &
@@ -5560,11 +5563,15 @@ contains
     else
       call linResp_calcExcitations(env, linearResponse, tSpin, denseDesc, eigvecsReal, eigen, work,&
           & filling, coord(:,:nAtom), sccCalc, dQAtom, pSpecies0, neighbourList%iNeighbour,&
-          & img2CentCell, orb, fdAutotest, taggedWriter, hybridXc, dftbEnergy%Eexcited, energies)
+          & img2CentCell, orb, fdAutotest, taggedWriter, hybridXc, tempElec, dftbEnergy%Eexcited,&
+          & energies)
     end if
     dftbEnergy%Etotal = dftbEnergy%Etotal + dftbEnergy%Eexcited
     dftbEnergy%EMermin = dftbEnergy%EMermin + dftbEnergy%Eexcited
+    !!dftbEnergy%EMermin = dftbEnergy%Etotal  + dftbEnergy%Eexcited
     dftbEnergy%EGibbs = dftbEnergy%EGibbs + dftbEnergy%Eexcited
+    write(16,'(2x,f16.8,2x,f16.8)') dftbEnergy%Etotal  + dftbEnergy%Eexcited,  dftbEnergy%EMermin + dftbEnergy%Eexcited
+    
 
   end subroutine calculateLinRespExcitations
 
