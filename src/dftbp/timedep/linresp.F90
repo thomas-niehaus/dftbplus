@@ -262,7 +262,7 @@ contains
   !> Wrapper to call the actual linear response routine for excitation energies
   subroutine linResp_calcExcitations(env, this, tSpin, denseDesc, eigVec, eigVal, SSqrReal,&
       & filling, coords0, sccCalc, dqAt, species0, iNeighbour, img2CentCell, orb,&
-      & fdTagged, taggedWriter, hybridXc, tempElec, excEnergy, allExcEnergies)
+      & fdTagged, taggedWriter, hybridXc, tempElec, TS, excEnergy, allExcEnergies)
 
     !> Environment settings
     type(TEnvironment), intent(inout) :: env
@@ -319,7 +319,10 @@ contains
     class(THybridXcFunc), allocatable, intent(inout) :: hybridXc
 
     !> Electronic temperature
-    real(dp), intent(out) :: tempElec
+    real(dp), intent(in) :: tempElec
+
+    !> Entropic contribution to excited state energy
+    real(dp), intent(out) :: TS
 
     !> Excitation energy (only when nStat /=0, othewise set numerically 0)
     real(dp), intent(out) :: excEnergy
@@ -331,7 +334,7 @@ contains
       @:ASSERT(size(orb%nOrbAtom) == this%nAtom)
       call LinRespGrad_old(env, this, denseDesc, eigVec, eigVal, sccCalc, dqAt, coords0,&
           & SSqrReal, filling, species0, iNeighbour, img2CentCell, orb, fdTagged, taggedWriter,&
-          & hybridXc, tempElec, excEnergy, allExcEnergies)
+          & hybridXc, tempElec, TS, excEnergy, allExcEnergies)
     else
       call error('Internal error: Illegal routine call to LinResp_calcExcitations.')
     end if
@@ -342,8 +345,8 @@ contains
   !> Wrapper to call linear response calculations of excitations and forces in excited states
   subroutine LinResp_addGradients(env, tSpin, this, denseDesc, eigVec, eigVal, SSqrReal, filling,&
       & coords0, sccCalc, dqAt, species0, iNeighbour, img2CentCell, orb, skHamCont, skOverCont,&
-      & fdTagged, taggedWriter, hybridXc, tempElec, excEnergy, allExcEnergies, excgradient, nacv,&
-      & derivator, rhoSqr, deltaRho, occNatural, naturalOrbs)
+      & fdTagged, taggedWriter, hybridXc, tempElec, TS, excEnergy, allExcEnergies, excgradient,&
+      & nacv, derivator, rhoSqr, deltaRho, occNatural, naturalOrbs)
 
     !> Environment settings
     type(TEnvironment), intent(inout) :: env
@@ -415,7 +418,10 @@ contains
     class(THybridXcFunc), allocatable, intent(inout) :: hybridXc
 
     !> Electronic temperature
-    real(dp), intent(out) :: tempElec    
+    real(dp), intent(in) :: tempElec
+
+    !> Entropic contribution to excited state energy
+    real(dp), intent(out) :: TS
 
     !> Energy of particular excited state
     real(dp), intent(out) :: excenergy
@@ -451,15 +457,16 @@ contains
       if (allocated(occNatural)) then
         call LinRespGrad_old(env, this, denseDesc, eigVec, eigVal, sccCalc, dqAt, coords0,&
             & SSqrReal, filling, species0, iNeighbour, img2CentCell, orb, fdTagged, taggedWriter,&
-            & hybridXc, tempElec, excEnergy, allExcEnergies, deltaRho=deltaRho, shift=shiftPerAtom,&
-            & skHamCont=skHamCont, skOverCont=skOverCont, excgrad=excgradient, nacv=nacv,&
-            & derivator=derivator, rhoSqr=rhoSqr, occNatural=occNatural, naturalOrbs=naturalOrbs)
+            & hybridXc, tempElec, TS, excEnergy, allExcEnergies, deltaRho=deltaRho,&
+            & shift=shiftPerAtom, skHamCont=skHamCont, skOverCont=skOverCont, excgrad=excgradient, &
+            & nacv=nacv, derivator=derivator, rhoSqr=rhoSqr, occNatural=occNatural,&
+            & naturalOrbs=naturalOrbs)
       else
          call LinRespGrad_old(env, this, denseDesc, eigVec, eigVal, sccCalc, dqAt, coords0,&
             & SSqrReal, filling, species0, iNeighbour, img2CentCell, orb, fdTagged, taggedWriter,&
-            & hybridXc, tempElec, excEnergy, allExcEnergies, deltaRho=deltaRho, shift=shiftPerAtom,&
-            & skHamCont=skHamCont, skOverCont=skOverCont, excgrad=excgradient, nacv=nacv,&
-            & derivator=derivator, rhoSqr=rhoSqr)
+            & hybridXc, tempElec, TS, excEnergy, allExcEnergies, deltaRho=deltaRho,&
+            & shift=shiftPerAtom, skHamCont=skHamCont, skOverCont=skOverCont, excgrad=excgradient,&
+            & nacv=nacv, derivator=derivator, rhoSqr=rhoSqr)
       end if
 
     else

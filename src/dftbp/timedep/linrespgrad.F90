@@ -87,8 +87,8 @@ contains
   !! based on Time Dependent DFRT
   subroutine LinRespGrad_old(env, this, denseDesc, grndEigVecs, grndEigVal, sccCalc, dq, coord0,&
       & SSqr, filling, species0, iNeighbour, img2CentCell, orb, fdTagged, taggedWriter, hybridXc,&
-      & tempElec, omega, allOmega, deltaRho, shift, skHamCont, skOverCont, excgrad, nacv, derivator,&
-      & rhoSqr, occNatural, naturalOrbs)
+      & tempElec, TS, omega, allOmega, deltaRho, shift, skHamCont, skOverCont, excgrad, nacv,&
+      & derivator, rhoSqr, occNatural, naturalOrbs)
 
     !> Environment settings
     type(TEnvironment), intent(inout) :: env
@@ -141,7 +141,10 @@ contains
     class(THybridXcFunc), allocatable, intent(inout) :: hybridXc
 
     !> Electronic temperature
-    real(dp), intent(out) :: tempElec    
+    real(dp), intent(in) :: tempElec
+
+    !> Entropic contribution to excited state energy
+    real(dp), intent(out) :: TS
 
     !> Excitation energy of state nStat
     real(dp), intent(out) :: omega
@@ -187,14 +190,13 @@ contains
     real(dp), allocatable :: xpy(:,:), xmy(:,:), sqrOccIA(:)
     real(dp), allocatable :: xpym(:), xpyn(:), xmyn(:), xmym(:)
     real(dp), allocatable :: t(:,:,:), rhs(:), woo(:,:), wvv(:,:), wov(:)
-    real(dp), allocatable :: eval(:), transitionDipoles(:,:), occTemp(:,:)
+    real(dp), allocatable :: eval(:), transitionDipoles(:,:)
     integer, allocatable :: win(:), getIA(:,:), getIJ(:,:), getAB(:,:)
 
     !> Array from pairs of single particles states to compound index - should replace with a more
     !> compact data structure in the cases where there are oscilator windows
     integer, allocatable :: iatrans(:,:,:)
     integer :: ias, a, s, nDegOrb, iDegOrb
-    real(dp) :: gooj, eMermin, elecTmp, kb, hocc
 
     character, allocatable :: symmetries(:)
 
@@ -679,36 +681,7 @@ contains
       call getOscillatorStrengths(this, rpa, sym, eval, xpy, snglPartTransDip(1:rpa%nxov_rd,:),&
           & nstat, osz, transitionDipoles)
 
-      allocate(occTemp(size(filling), nSpin))
-      occTemp = 0.0_dp
-      print *,'The temperature is ', tempElec/Boltzmann
-      print *,'Index max is', rpa%nxov_rd
-      do ias = 1, rpa%nxov_rd
-        !call indxov(rpa%win, ias, rpa%getIA, i, a, s)
-        i = rpa%getIA(rpa%win(ias),1)
-        a = rpa%getIA(rpa%win(ias),2)
-        s = rpa%getIA(rpa%win(ias),3)
-        occTemp(i, s) = occTemp(i, s) - 0.5_dp * xpy(ias,nstat) * xmy(ias,nstat)
-        occTemp(a, s) = occTemp(a, s) + 0.5_dp * xpy(ias,nstat) * xmy(ias,nstat) 
-      end do
-      
-      if (nSpin == 2) then
-        occTemp = occTemp + filling
-      else
-        occTemp = 2.0_dp*occTemp + filling
-      endif
-      do ias = 1, size(filling, dim=1)
-        write(13,'(2x,i3,2x,f10.8,2x,f10.8)') ias,filling(ias,1),occTemp(ias,1)
-      enddo
-
-      eMermin = 0.0_dp
-      do ias = 1, size(filling, dim=1)
-        hocc = occTemp(ias,1)/2._dp
-        if (hocc > 1.d-8 .and. (1-hocc)  > 1.d-8) then
-          eMermin = eMermin +  hocc * log(hocc) + (1-hocc)*log(1-hocc) 
-        end if 
-      enddo
-      eMermin = 2.0_dp * eMermin * tempElec 
+      call getEntropy(this, rpa, filling, xpy(:,nstat), xmy(:,nstat), tempElec, TS)
 
       ! Transition charges for state nstat
       if (this%writeTransQ) then
@@ -979,9 +952,7 @@ contains
     if (nstat == 0) then
       omega = 0.0_dp
     else
-      omega = sqrt(eval(nstat)) + 0.5*eMermin
-      write(14,'(2x,f16.8)') 0.5*eMermin
-      !!omega = sqrt(eval(nstat))
+      omega = sqrt(eval(nstat))
     end if
 
   end subroutine LinRespGrad_old
@@ -5553,4 +5524,66 @@ contains
 
   end subroutine getAndWriteTransitionCharges
 
+  subroutine getEntropy(lr, rpa, filling, xpy, xmy, tempElec, TS)
+    !> Data structure for linear response
+    type(TLinResp), intent(in) :: lr
+
+    !> Run time parameters of the Casida routine
+    type(TCasidaParameter), intent(in) :: rpa
+
+    !> Occupations for the states
+    real(dp), intent(in) :: filling(:,:)
+
+    ! Casida (X+Y) for current state
+    real(dp), intent(in) :: xpy(:)
+
+    ! Casida (X-Y) for current state
+    real(dp), intent(in) :: xmy(:)    
+
+    !> Electronic temperature
+    real(dp), intent(in) :: tempElec
+
+    !> Entropic contribution to excited state energy
+    real(dp), intent(out) :: TS
+
+    integer :: iOrb, nOrb, iSpin, nSpin, ias, i, a, s
+    real(dp) :: hOcc
+    real(dp), allocatable :: excOcc(:,:)
+
+    nOrb = size(filling, dim=1)
+    nSpin = size(filling, dim=2)
+    allocate(excOcc(nOrb, nSpin))
+    
+    excOcc = 0.0_dp
+    do ias = 1, rpa%nxov_rd
+      i = rpa%getIA(rpa%win(ias),1)
+      a = rpa%getIA(rpa%win(ias),2)
+      s = rpa%getIA(rpa%win(ias),3)
+      excOcc(i, s) = excOcc(i, s) - 0.5_dp * xpy(ias) * xmy(ias)
+      excOcc(a, s) = excOcc(a, s) + 0.5_dp * xpy(ias) * xmy(ias) 
+    end do
+
+    if (nSpin == 1) then
+      excOcc = 2.0_dp * excOcc
+    endif
+
+    excOcc = excOcc + filling
+
+    do ias = 1, size(filling, dim=1)
+      write(13,'(2x,i3,2x,f10.8,2x,f10.8)') ias,filling(ias,1),excOcc(ias,1)
+    enddo
+
+    TS = 0.0_dp
+    do iSpin = 1, nSpin
+      do iOrb = 1, nOrb
+        hOcc = (nSpin/2.0_dp) * excOcc(iOrb, iSpin)
+        if (hOcc > epsilon(0.0_dp) .and. (1-hOcc) > epsilon(0.0_dp)) then
+          TS = TS - (hOcc * log(hOcc) + (1-hOcc)*log(1-hOcc))
+        endif
+      enddo
+    enddo
+    TS = (2.0_dp/nSpin) * TS * tempElec
+
+  end subroutine getEntropy
+  
 end module dftbp_timedep_linrespgrad

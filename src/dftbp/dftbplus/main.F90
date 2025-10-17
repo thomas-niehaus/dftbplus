@@ -1665,7 +1665,7 @@ contains
           & this%neighbourList, this%nNeighbourSK, this%denseDesc, this%iSparseStart,&
           & this%img2CentCell, this%tWriteAutotest, this%tCasidaForces, this%tLinRespZVect,&
           & this%tPrintExcitedEigvecs, this%tPrintEigvecsTxt, this%nonSccDeriv, this%tempElec,&
-          & this%dftbEnergy(1), this%energiesCasida, this%SSqrReal, this%rhoSqrReal,&
+          & this%excTS, this%dftbEnergy(1), this%energiesCasida, this%SSqrReal, this%rhoSqrReal,&
           & this%densityMatrix%deltaRhoOut, this%excitedDerivs, this%naCouplings, &
           & this%occNatural, this%hybridXc)
       call env%globalTimer%stopTimer(globalTimers%lrExcitation)
@@ -5382,7 +5382,7 @@ contains
       & ints, eigvecsReal, eigen, filling, coord, species, speciesName, orb, skHamCont,&
       & skOverCont, autotestTag, taggedWriter, runId, neighbourList, nNeighbourSk, denseDesc,&
       & iSparseStart, img2CentCell, tWriteAutotest, tForces, tLinRespZVect, tPrintExcEigvecs,&
-      & tPrintExcEigvecsTxt, nonSccDeriv, tempElec, dftbEnergy, energies, work, rhoSqrReal,&
+      & tPrintExcEigvecsTxt, nonSccDeriv, tempElec, excTS, dftbEnergy, energies, work, rhoSqrReal,&
       & deltaRhoOut, excitedDerivs, naCouplings, occNatural, hybridXc)
 
     !> Environment settings
@@ -5476,7 +5476,10 @@ contains
     type(TNonSccDiff), intent(in) :: nonSccDeriv
 
     !> Electronic temperature
-    real(dp), intent(out) :: tempElec
+    real(dp), intent(in) :: tempElec
+
+    !> Entropic contribution to excited state energy
+    real(dp), intent(out) :: excTS
 
     !> Energy contributions and total
     type(TEnergies), intent(inout) :: dftbEnergy
@@ -5553,7 +5556,7 @@ contains
       call LinResp_addGradients(env, tSpin, linearResponse, denseDesc, eigvecsReal, eigen,&
           & work, filling, coord(:,:nAtom), sccCalc, dQAtom, pSpecies0, neighbourList%iNeighbour,&
           & img2CentCell, orb, skHamCont, skOverCont, fdAutotest, taggedWriter, hybridXc, tempElec,&
-          & dftbEnergy%Eexcited, energies, excitedDerivs, naCouplings, nonSccDeriv,&
+          & excTS, dftbEnergy%Eexcited, energies, excitedDerivs, naCouplings, nonSccDeriv,&
           &  rhoSqrReal, deltaRhoOut, occNatural, naturalOrbs)
       if (tPrintExcEigvecs) then
         call writeRealEigvecs(env, runId, neighbourList, nNeighbourSK, denseDesc, iSparseStart,&
@@ -5563,15 +5566,13 @@ contains
     else
       call linResp_calcExcitations(env, linearResponse, tSpin, denseDesc, eigvecsReal, eigen, work,&
           & filling, coord(:,:nAtom), sccCalc, dQAtom, pSpecies0, neighbourList%iNeighbour,&
-          & img2CentCell, orb, fdAutotest, taggedWriter, hybridXc, tempElec, dftbEnergy%Eexcited,&
-          & energies)
+          & img2CentCell, orb, fdAutotest, taggedWriter, hybridXc, tempElec, excTS,&
+          & dftbEnergy%Eexcited, energies)
     end if
+    write(16,'(2x,5(f16.8,2x))') dftbEnergy%Etotal, dftbEnergy%EMermin, dftbEnergy%Etotal  + dftbEnergy%Eexcited,   dftbEnergy%Etotal+ dftbEnergy%Eexcited- excTS ,-excTS
+    dftbEnergy%EMermin = dftbEnergy%Etotal+ dftbEnergy%Eexcited - excTS
     dftbEnergy%Etotal = dftbEnergy%Etotal + dftbEnergy%Eexcited
-    dftbEnergy%EMermin = dftbEnergy%EMermin + dftbEnergy%Eexcited
-    !!dftbEnergy%EMermin = dftbEnergy%Etotal  + dftbEnergy%Eexcited
     dftbEnergy%EGibbs = dftbEnergy%EGibbs + dftbEnergy%Eexcited
-    write(16,'(2x,f16.8,2x,f16.8)') dftbEnergy%Etotal  + dftbEnergy%Eexcited,  dftbEnergy%EMermin + dftbEnergy%Eexcited
-    
 
   end subroutine calculateLinRespExcitations
 

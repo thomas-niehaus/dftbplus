@@ -1116,6 +1116,9 @@ module dftbp_dftbplus_initprogram
     !> All of the excited energies actually solved by Casida routines (if used)
     real(dp), allocatable :: energiesCasida(:)
 
+    !> Entropic contribution to excited state energy
+    real(dp) :: excTS
+
     !> Type for determinant control in DFTB (Delta DFTB)
     type(TDftbDeterminants) :: deltaDftb
 
