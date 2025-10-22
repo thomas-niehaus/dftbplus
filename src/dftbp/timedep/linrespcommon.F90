@@ -386,7 +386,7 @@ contains
     logical :: updwn
     real(dp) :: docc_ij
 
-    logical :: doT = .true.
+    logical :: doT = .false.
 
     if (doT) then
       do ia = 1, nmat
