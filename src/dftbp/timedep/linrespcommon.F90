@@ -1376,7 +1376,7 @@ contains
 
 
   !> Calculate dipole moment for transitions.
-  function oscillatorStrength(tSpin, transd, omega, xpy, sqrOccIA) result(osz)
+  function oscillatorStrength(tSpin, transd, omega, xpy, frOccIA) result(osz)
 
     !> Spin-polarized calculation?
     logical, intent(in) :: tSpin
@@ -1390,8 +1390,8 @@ contains
     !> Excitation eigenvector (X+Y) for state in question
     real(dp), intent(in) :: xpy(:)
 
-    !> Square root of KS occupation differences
-    real(dp), intent(in) :: sqrOccIA(:)
+    !> Product of occupation factors for transition i -> a
+    real(dp), intent(in) :: frOccIA(:)
 
     !> Oscillator strength
     real(dp) :: osz
@@ -1401,7 +1401,7 @@ contains
 
     osz = 0.0_dp
     do ii = 1, 3
-      rtmp = sum(transd(:,ii) * sqrOccIA * xpy)
+      rtmp = sum(transd(:,ii) * frOccIA * xpy)
       osz = osz + rtmp * rtmp
     end do
     osz = twothird * omega * osz
@@ -1416,7 +1416,7 @@ contains
 
 
   !> Transition dipoles between single particle states.
-  subroutine transitionDipole(tSpin, transd, xpy, sqrOccIA, tdip)
+  subroutine transitionDipole(tSpin, transd, xpy, frOccIA, tdip)
 
     !> Spin-polarized calculation?
     logical, intent(in) :: tSpin
@@ -1427,8 +1427,8 @@ contains
     !> Eigenvectors RPA equations (X+Y)
     real(dp), intent(in) :: xpy(:,:)
 
-    !> Square root of KS occupation differences
-    real(dp), intent(in) :: sqrOccIA(:)
+    !> Product of occupation factors for transition i -> a
+    real(dp), intent(in) :: frOccIA(:)
 
     !> Resulting transition dipoles
     real(dp), intent(out) :: tdip(:,:)
@@ -1439,7 +1439,7 @@ contains
     !$OMP PARALLEL DO DEFAULT(SHARED) PRIVATE(ii) SCHEDULE(RUNTIME)
     do ii = 1, size(xpy, dim=2)
       do ll = 1, 3
-        tdip(ii, ll) = sum(transd(:,ll) * sqrOccIA * xpy(:,ii))
+        tdip(ii, ll) = sum(transd(:,ll) * frOccIA * xpy(:,ii))
       end do
     end do
     !$OMP END PARALLEL DO
@@ -1573,7 +1573,7 @@ contains
   #:endif
 
     do i = 1, nexc
-      TDvec(:) = xpy(:,i)
+      TDvec(:) = rpa%frOccIA * xpy(:,i)
       TDvnorm = 1.0_dp / sqrt(sum(TDvec**2))
       TDvec(:) = TDvec * TDvnorm
       TDvec_sq = TDvec**2
@@ -1954,4 +1954,63 @@ contains
 
   end subroutine incMemStratmann
 
+
+  !> Fractional occupation factors occ(i) for occupied states i and (1-occ(i)) for virtual states
+  subroutine getOccFactors(nxov, nocc_ud, getIA, win, occNr, tFracOcc, frOcc, frOccIA)
+
+    !> Number of excitations
+    integer, intent(in) :: nxov
+    
+    !> Occupied levels per spin channel
+    integer, intent(in) :: nocc_ud(:)
+
+    !> Index array of transitions after sorting of eigenvalues
+    integer, intent(in) :: getIA(:,:)
+
+    !> Index array after sorting of eigenvalues
+    integer, intent(in) :: win(:)
+    
+    !> Occupation of states
+    real(dp), intent(in) :: occNr(:,:)
+
+    !> Do we have fractional occupations
+    logical, intent(in) :: tFracOcc
+    
+    !> Occupation factors
+    real(dp), allocatable, intent(out) :: frOcc(:,:)
+
+    !> Product of occupation factors for transition i -> a
+    real(dp), allocatable, intent(out) :: frOccIA(:)
+
+    integer :: i, a, s, ias, nSpin, nOrb
+    
+    nOrb = size(occNr, dim=1)
+    nSpin = size(occNr, dim=2)
+
+    allocate(frOcc, mold=occNr)
+    allocate(frOccIA(nxov))
+    if (tFracOcc) then
+      do s = 1, nSpin
+        do i = 1, nocc_ud(s)
+          frOcc(i,s) = (nSpin/2.0_dp) * occNr(i,s)
+        end do
+        do i = nocc_ud(s) + 1, nOrb
+          frOcc(i,s) = 1.0_dp - ((nSpin/2.0_dp) * occNr(i,s))
+        end do
+      end do
+      do ias = 1, nxov
+        i = getIA(win(ias),1)
+        a = getIA(win(ias),2)
+        s = getIA(win(ias),3)
+        frOccIA(ias) = frOcc(i,s) * frOcc(a,s)
+      end do
+    else
+      do s = 1, nSpin
+        frOcc(:,s) = 1.0_dp
+      enddo
+      frOccIA(:) = 1.0_dp
+    endif
+    
+
+  end subroutine getOccFactors 
 end module dftbp_timedep_linrespcommon

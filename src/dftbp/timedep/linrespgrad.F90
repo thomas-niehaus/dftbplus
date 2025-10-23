@@ -35,7 +35,7 @@ module dftbp_timedep_linrespgrad
   use dftbp_timedep_linrespcommon, only : actionAminusB, actionAplusB, calcTransitionDipoles,&
       & dipselect, excitedDipoleOut, excitedQOut, getExcSpin, getSPExcitations, getSqrOcc,&
       & incMemStratmann, indxov, initialSubSpaceMatrixApmB, oscillatorStrength, rindxov_array,&
-      & transitionDipole, twothird, writeExcMulliken, writeSPExcitations
+      & transitionDipole, twothird, writeExcMulliken, writeSPExcitations, getOccFactors
   use dftbp_timedep_linresptypes, only : linrespSolverTypes, TCasidaParameter,&
       & TCasidaParameter_init, TLinResp
   use dftbp_timedep_transcharges, only : transq, TTransCharges, TTransCharges_init
@@ -187,7 +187,7 @@ contains
     real(dp), allocatable :: gammaMat(:,:), lrGamma(:,:), snglPartTransDip(:,:)
     real(dp), allocatable :: ovrXev(:,:,:), wij(:)
     real(dp), allocatable :: dqex(:,:), sposz(:), osz(:), pc(:,:,:), pca(:,:,:)
-    real(dp), allocatable :: xpy(:,:), xmy(:,:), sqrOccIA(:)
+    real(dp), allocatable :: xpy(:,:), xmy(:,:), sqrOccIA(:), frOcc(:,:), frOccIA(:)
     real(dp), allocatable :: xpym(:), xpyn(:), xmyn(:), xmym(:)
     real(dp), allocatable :: t(:,:,:), rhs(:), woo(:,:), wvv(:,:), wov(:)
     real(dp), allocatable :: eval(:), transitionDipoles(:,:)
@@ -308,6 +308,8 @@ contains
         end if
       end do
     end do
+
+
     ! if (tFracOcc .and. tHybridXc) then
     !   call error('Fractional occupations not implemented for TD-LC-DFTB.')
     ! end if
@@ -391,6 +393,8 @@ contains
     nxoo_max = maxval(nxoo_ud)
     nxvv_max = maxval(nxvv_ud)
 
+ 
+
     if (this%nExc + 1 >= nxov) then
       write(tmpStr,"(' Insufficent single particle excitations, ',I0,&
           & ', for required number of excited states ',I0)")nxov, this%nExc
@@ -407,7 +411,7 @@ contains
 
     ! Is a z vector required?
     tZVector = tForces .or. this%writeMulliken .or. this%writeCoeffs .or. present(naturalOrbs) .or.&
-        & this%tWriteDensityMatrix .or. this%tNaCoupling
+        & this%tWriteDensityMatrix .or. this%tNaCoupling .or. tFracOcc
     doAllZVectors = tZVector .and. (nstat == 0) .and. (.not. this%isCIopt) .and.&
         & (.not. this%tNaCoupling)
 
@@ -508,6 +512,9 @@ contains
     ! Build square root of occupation difference between virtual and occupied states
     call getSqrOcc(filling, win, nxov_ud(1), nxov, getIA, this%tSpin, sqrOccIA)
 
+    ! Determine occupation factors occ(i) (occupied) and (1-occ(a)) (virtual)
+    call getOccFactors(nxov, nocc_ud, getIA, win, filling, tFracOcc, frOcc, frOccIA)
+
     call env%globalTimer%startTimer(globalTimers%lrTransCharges)
 
     ! First call to initialize charges for all occ-vir transitions
@@ -584,27 +591,6 @@ contains
     ! set up transition indexing
     allocate(iatrans(norb, norb, nSpin))
     call rindxov_array(win, nxov, nxoo, nxvv, getIA, getIJ, getAB, iatrans)
-    ! print *,'The ov'
-    ! do ias = 1, nxov_rd
-    !   ii = getIA(win(ias), 1)
-    !   aa = getIA(win(ias), 2)
-    !   ss = getIA(win(ias), 3)
-    !   write(*,'(2x,i3,2x,i3,2x,i3,2x,i3,2x,i3)') ias, ii, aa, ss, iatrans(ii,aa,ss)
-    ! enddo
-    ! print *,'The oo'
-    ! do ias = 1, nxoo_ud(1)
-    !   ii = getIJ(ias, 1)
-    !   aa = getIJ(ias, 2)
-    !   ss = getIJ(ias, 3)
-    !   write(*,'(2x,i3,2x,i3,2x,i3,2x,i3,2x,i3)') ias, ii, aa, ss, iatrans(ii,aa,ss)
-    ! enddo
-    ! print *,'The vv'
-    ! do ias = 1, nxvv_ud(1)
-    !   ii = getAB(ias, 1)
-    !   aa = getAB(ias, 2)
-    !   ss = getAB(ias, 3)
-    !   write(*,'(2x,i3,2x,i3,2x,i3,2x,i3,2x,i3)') ias, ii, aa, ss, iatrans(ii,aa,ss)
-    ! enddo    
 
     ! MPI distribution of RPA vectors according to these indices
     call distributeRangeInChunks(env, 1, nxov_rd, iGlobal, fGlobal)
@@ -612,8 +598,8 @@ contains
     ! All relevant run time parameters of Casida are stored in a derived type
     ! Input arrays are deallocated on return
     call TCasidaParameter_init(rpa, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud, nxov_rd,&
-        & iaTrans, getIA, getIJ, getAB, win, wij, sqrOccIA, tHybridXc, tZVector)
-
+        & iaTrans, getIA, getIJ, getAB, win, wij, sqrOccIA, frOcc, frOccIA, tHybridXc, tZVector)
+ 
     if (this%writeXplusY) then
       call openfile(fdXPlusY, XplusYOut, mode="w")
     end if
@@ -678,12 +664,19 @@ contains
       end select
       call env%globalTimer%stopTimer(globalTimers%lrSolver)
 
+      ! For fractional occupations, xpy holds (X+Y) * sqrOccIA. Need for renormalization.
+      if (tFracOcc) then
+        do iLev = 1, this%nExc
+          xpy(:,iLev) = xpy(:,iLev)/rpa%sqrOccIA
+          xpy(:,iLev) = xpy(:,iLev)/sqrt(sum(xpy(:,iLev)**2))
+          xmy(:,iLev) = xmy(:,iLev)/rpa%sqrOccIA
+          xmy(:,iLev) = xmy(:,iLev)/sqrt(sum(xmy(:,iLev)**2))
+        end do
+      end if
+      
       ! Excitation oscillator strengths for resulting states
       call getOscillatorStrengths(this, rpa, sym, eval, xpy, snglPartTransDip(1:rpa%nxov_rd,:),&
           & nstat, osz, transitionDipoles)
-
-      call getEntropy(this, rpa, filling, xpy(:,nstat), xmy(:,nstat), tempElec, TS)
-!!      call naturalOrbitalsAndEntropy(rpa, xpy(:,nstat), excNatTS)
 
       ! Transition charges for state nstat
       if (this%writeTransQ) then
@@ -717,8 +710,6 @@ contains
 
     end do
 
-    !! Compute excited state occupations
-    
     call closeFile(fdTrans)
     call closeFile(fdXPlusY)
     call closeFile(fdTransDip)
@@ -764,34 +755,6 @@ contains
         end if
 
       end if
-
-      ! if (this%tSpin) then
-      !   if (any( abs(filling) > elecTolMax .and. abs(filling-1.0_dp) > elecTolMax ) ) then
-      !     do i = 1, this%nExc
-      !       xpy(:,i) = xpy(:,i) * rpa%sqrOccIA(:)
-      !       xmy(:,i) = xmy(:,i) * rpa%sqrOccIA(:)
-      !     enddo
-      !   end if
-      ! else
-      !   if (any( abs(filling) > elecTolMax .and. abs(filling-2.0_dp) > elecTolMax ) ) then
-      !      do i = 1, this%nExc
-      !        xpy(:,i) = xpy(:,i) * rpa%sqrOccIA(:)
-      !        xmy(:,i) = xmy(:,i) * rpa%sqrOccIA(:)
-      !      enddo
-      !   end if
-      ! end if
-      
-      ! if (this%tSpin) then
-      !   if (any( abs(filling) > elecTolMax .and. abs(filling-1.0_dp) > elecTolMax ) ) then
-      !     call error("Fractional fillings not currently possible for excited state property&
-      !         & calculations")
-      !   end if
-      ! else
-      !   if (any( abs(filling) > elecTolMax .and. abs(filling-2.0_dp) > elecTolMax ) ) then
-      !     call error("Fractional fillings not currently possible for excited state property&
-      !         & calculations")
-      !   end if
-      ! end if
 
       ! Arrays needed for Z vector
       allocate(t(norb, norb, nSpin))
@@ -1590,7 +1553,7 @@ contains
     !$OMP PARALLEL DO DEFAULT(SHARED) PRIVATE(ii) SCHEDULE(RUNTIME)
     do ii = 1, size(xpy, dim=2)
       osz(ii) = oscillatorStrength(lr%tSpin, snglPartTransDip, sqrt(eval(ii)), xpy(:,ii),&
-          & rpa%sqrOccIA)
+          & rpa%frOccIA)
     end do
     !$OMP  END PARALLEL DO
 
@@ -1601,7 +1564,7 @@ contains
     end if
 
     if (lr%writeTransDip) then
-      call transitionDipole(lr%tSpin, snglPartTransDip, xpy, rpa%sqrOccIA, transitionDipoles)
+      call transitionDipole(lr%tSpin, snglPartTransDip, xpy, rpa%frOccIA, transitionDipoles)
     end if
 
   end subroutine getOscillatorStrengths
@@ -1723,15 +1686,15 @@ contains
       do b = rpa%nocc_ud(s) + 1, a
         ibs = rpa%iaTrans(i, b, s)
         ab = rpa%iaTrans(a, b, s) - svv(s)
-        tmp1 = xpy(ias) * xpy(ibs) + xmy(ias) * xmy(ibs)
-        tmp2 = omega * (xpy(ias) * xmy(ibs)+ xmy(ias) * xpy(ibs))
-        t(a,b,s) = t(a,b,s) + 0.5_dp * tmp1
+        tmp1 = rpa%frOcc(i,s) * (xpy(ias) * xpy(ibs) + xmy(ias) * xmy(ibs))
+        tmp2 = omega * rpa%frOcc(i,s) * (xpy(ias) * xmy(ibs) + xmy(ias) * xpy(ibs))
+        t(a,b,s) = t(a,b,s) + 0.5_dp * rpa%frOccIA(ab) * tmp1
         ! to prevent double counting
         if (a /= b) then
-          t(b,a,s) = t(b,a,s) + 0.5_dp * tmp1
-        end if
+          t(b,a,s) = t(b,a,s) + 0.5_dp * rpa%frOccIA(ab) * tmp1
+        end if 
         ! Note: diagonal elements will be multiplied by 0.5 later.
-        wvv(ab,s) = wvv(ab,s) + grndEigVal(i,s) * tmp1 + tmp2
+        wvv(ab,s) = wvv(ab,s) + rpa%frOccIA(ab) * (grndEigVal(i,s) * tmp1 + tmp2)
       end do
 
       ! Build t_ij = 0.5 * sum_a (X+Y)_ia (X+Y)_ja + (X-Y)_ia (X-Y)_ja and 1 / (1 + delta_ij) Q_ij
@@ -1743,16 +1706,16 @@ contains
         ! ADG: assume no constraint on occ space atm (nocc_r = nocc)
         ! otherwise first argument should be nocc - nocc_r
         ij = rpa%iaTrans(i, j, s) - soo(s)
-        tmp1 = xpy(ias) * xpy(jas) + xmy(ias) * xmy(jas)
-        tmp2 = omega * (xpy(ias) * xmy(jas) + xmy(ias) * xpy(jas))
+        tmp1 = rpa%frOcc(a,s) * (xpy(ias) * xpy(jas) + xmy(ias) * xmy(jas))
+        tmp2 = omega * rpa%frOcc(a,s) * (xpy(ias) * xmy(jas) + xmy(ias) * xpy(jas))
         ! Note, there is a typo in Heringer et al. J. Comp Chem 28, 2589.
         ! The sign must be negative see Furche, J. Chem. Phys, 117 7433 (2002).
-        t(i,j,s) = t(i,j,s) - 0.5_dp * tmp1
+        t(i,j,s) = t(i,j,s) - 0.5_dp * rpa%frOccIA(ij) * tmp1
         ! to prevent double counting
         if (i /= j) then
-          t(j,i,s) = t(j,i,s) - 0.5_dp * tmp1
+          t(j,i,s) = t(j,i,s) - 0.5_dp * rpa%frOccIA(ij) * tmp1
         end if
-        woo(ij,s) = woo(ij,s) - grndEigVal(a,s) * tmp1 + tmp2
+        woo(ij,s) = woo(ij,s) - rpa%frOccIA(ij) * (grndEigVal(a,s) * tmp1 + tmp2)
       end do
 
     end do
@@ -5524,7 +5487,7 @@ contains
     atomicTransQ(:) = 0.0_dp
     do ia = 1, rpa%nxov_rd
       qia(:) = transChrg%qTransIA(ia, env, denseDesc, ovrXev, grndEigVecs, rpa%getIA, rpa%win)
-      atomicTransQ(:) = atomicTransQ + preFactor * qia * xpy(ia,lr%nstat)
+      atomicTransQ(:) = atomicTransQ + preFactor * qia * rpa%frOccIA(ia) * xpy(ia,lr%nstat)
     end do
 
     call openfile(fdTransQ, transChrgOut, mode="w")
@@ -5608,11 +5571,11 @@ contains
 
   end subroutine getEntropy
 
-  subroutine naturalOrbitalsAndEntropy(rpa, filling, xpy, xmy, pc, rhs, tempElec, TS)
+  subroutine naturalOrbitalsAndEntropy(rpa, filling, xpy, xmy, t, rhs, tempElec, TS)
     !> Run time parameters of the Casida routine
     type(TCasidaParameter), intent(in) :: rpa
 
-    real(dp), intent(in) :: pc(:,:,:)
+    real(dp), intent(in) :: t(:,:,:)
     real(dp), intent(in) :: rhs(:)
     
     !> Ground state occupations
@@ -5625,69 +5588,69 @@ contains
     !> Excited state entropy
     real(dp), intent(out) :: TS
 
-    real(dp), allocatable :: eocc(:,:), mat(:,:), t(:,:,:), occ(:,:), rxpy(:), rxmy(:), locc(:)
+    real(dp), allocatable :: excOcc(:,:), mat(:,:), occ(:,:), rxpy(:), rxmy(:), locc(:)
     real(dp) :: tmp1, hocc, norm
 
     integer nSpin, ias, ibs, jas, i, j, a, b, ab, ij, s, info, iSpin, nOrb, iOrb, nxov, soo(2), svv(2)
 
-    ! Transition charges use compound index ijs = ij + soo(s)
-    nxov = size(xpy)
-    soo(:) = [0, rpa%nxoo_ud(1)]
-    svv(:) = [0, rpa%nxvv_ud(1)]
+    ! ! Transition charges use compound index ijs = ij + soo(s)
+    ! nxov = size(xpy)
+    ! soo(:) = [0, rpa%nxoo_ud(1)]
+    ! svv(:) = [0, rpa%nxvv_ud(1)]
     nOrb = rpa%nocc_ud(1) + rpa%nvir_ud(1)
     nSpin = size(rpa%nocc_ud)
     
-    print *,'Goo', nOrb
+    ! print *,'Goo', nOrb
 
-    allocate(rxpy(nxov))
-    allocate(rxmy(nxov))
-    do ias = 1, size(xpy)
-      rxpy(ias) = xpy(ias)/rpa%sqrOccIA(ias)
-      rxmy(ias) = xmy(ias)/rpa%sqrOccIA(ias)
-    enddo
-    norm = sqrt(sum(rxpy**2))
-    rxpy(:) = rxpy/norm
-    norm = sqrt(sum(rxmy**2))
-    rxmy(:) = rxmy/norm    
+    ! allocate(rxpy(nxov))
+    ! allocate(rxmy(nxov))
+    ! do ias = 1, size(xpy)
+    !   rxpy(ias) = xpy(ias)/rpa%sqrOccIA(ias)
+    !   rxmy(ias) = xmy(ias)/rpa%sqrOccIA(ias)
+    ! enddo
+    ! norm = sqrt(sum(rxpy**2))
+    ! rxpy(:) = rxpy/norm
+    ! norm = sqrt(sum(rxmy**2))
+    ! rxmy(:) = rxmy/norm    
     
-    allocate(t(nOrb,nOrb,nSpin))
-    allocate(occ(nOrb,nSpin))
-    allocate(locc(nOrb))
-    occ = (nSpin/2.0_dp) * filling
+    ! allocate(t(nOrb,nOrb,nSpin))
+    ! allocate(occ(nOrb,nSpin))
+    ! allocate(locc(nOrb))
+    ! occ = (nSpin/2.0_dp) * filling
     
-    t = 0.0_dp
+    ! t = 0.0_dp
     
-    do ias = 1, nxov
-      !!call indxov(rpa%win, ias, rpa%getIA, i, a, s)
-      i = rpa%getIA(rpa%win(ias),1)
-      a = rpa%getIA(rpa%win(ias),2)
-      s = rpa%getIA(rpa%win(ias),3)
+    ! do ias = 1, nxov
+    !   !!call indxov(rpa%win, ias, rpa%getIA, i, a, s)
+    !   i = rpa%getIA(rpa%win(ias),1)
+    !   a = rpa%getIA(rpa%win(ias),2)
+    !   s = rpa%getIA(rpa%win(ias),3)
 
-      ! BA: is T_aa = 0?
-      do b = rpa%nocc_ud(s) + 1, a
-        ibs = rpa%iaTrans(i, b, s)
-        ab = rpa%iaTrans(a, b, s) - svv(s)
-        tmp1 = occ(i,s) * (rxpy(ias) * rxpy(ibs) + rxmy(ias) * rxmy(ibs))
-        t(a,b,s) = t(a,b,s) + 0.5_dp * tmp1
-        ! to prevent double counting
-        if (a /= b) then
-          t(b,a,s) = t(b,a,s) + 0.5_dp * tmp1
-        end if
-        t(a,b,s) = t(a,b,s) * (1-occ(a,s)) * (1-occ(b,s))
-      end do
+    !   ! BA: is T_aa = 0?
+    !   do b = rpa%nocc_ud(s) + 1, a
+    !     ibs = rpa%iaTrans(i, b, s)
+    !     ab = rpa%iaTrans(a, b, s) - svv(s)
+    !     tmp1 = occ(i,s) * (rxpy(ias) * rxpy(ibs) + rxmy(ias) * rxmy(ibs))
+    !     t(a,b,s) = t(a,b,s) + 0.5_dp * tmp1
+    !     ! to prevent double counting
+    !     if (a /= b) then
+    !       t(b,a,s) = t(b,a,s) + 0.5_dp * tmp1
+    !     end if
+    !     t(a,b,s) = t(a,b,s) * (1-occ(a,s)) * (1-occ(b,s))
+    !   end do
 
-      do j = i, rpa%nocc_ud(s)
-        jas = rpa%iaTrans(j,a,s)
-        ij = rpa%iaTrans(i, j, s) - soo(s)
-        tmp1 =  (1-occ(a,s)) * (rxpy(ias) * rxpy(jas) + rxmy(ias) * rxmy(jas))
-        t(i,j,s) = t(i,j,s) - 0.5_dp * tmp1
-        if (i /= j) then
-          t(j,i,s) = t(j,i,s) - 0.5_dp * tmp1
-        end if
-        t(j,i,s) = t(j,i,s) * occ(i,s) * occ(j,s)
-      end do
+    !   do j = i, rpa%nocc_ud(s)
+    !     jas = rpa%iaTrans(j,a,s)
+    !     ij = rpa%iaTrans(i, j, s) - soo(s)
+    !     tmp1 =  (1-occ(a,s)) * (rxpy(ias) * rxpy(jas) + rxmy(ias) * rxmy(jas))
+    !     t(i,j,s) = t(i,j,s) - 0.5_dp * tmp1
+    !     if (i /= j) then
+    !       t(j,i,s) = t(j,i,s) - 0.5_dp * tmp1
+    !     end if
+    !     t(j,i,s) = t(j,i,s) * occ(i,s) * occ(j,s)
+    !   end do
       
-    end do
+    ! end do
 
     ! t = pc
     ! do ias = 1, size(rhs)
@@ -5741,32 +5704,28 @@ contains
     !   enddo
     ! enddo    
     
-    allocate(eocc(nOrb,nSpin))
+    allocate(excOcc(nOrb,nSpin))
     allocate(mat(nOrb,nOrb))
     mat(:,:) = 0.0_dp
     do iSpin = 1, nSpin
-      !!mat(:,:) = pc(:,:,iSpin)
       do iOrb = 1, nOrb
-        mat(iOrb,iOrb) =  occ(iOrb,iSpin)
+        mat(iOrb,iOrb) =  (nSpin/2.0_dp) * filling(iOrb,iSpin)
       enddo
       mat(:,:) = mat(:,:) + t(:,:,iSpin)
-      do iOrb = 1, nOrb
-        locc(iOrb) =  mat(iOrb,iOrb)
-      enddo      
-      call heev(mat, eocc(:,iSpin), 'U', 'N', info)
+      call heev(mat, excOcc(:,iSpin), 'U', 'N', info)
       do i = 1, nOrb
-        write(*,'(A,x,i3,3(2x,f10.6))') 'ino', i, eocc(i,iSpin), occ(i,iSpin),  locc(i)
+        write(*,'(A,x,i3,2(2x,f10.6))') 'ino', i, excOcc(i,iSpin), (nSpin/2.0_dp) * filling(i,iSpin)
       enddo
-      print *,'sum',sum(eocc(:,1))
+      print *,'sum',sum(excOcc(:,1))
     enddo
-    do ias = 1, size(filling, dim=1)
-      write(13,'(2x,i3,2x,f10.8,2x,f10.8)') ias,occ(ias,1),eocc(ias,1)
+    do i = 1, size(filling, dim=1)
+      write(13,'(2x,i3,2x,f10.8,2x,f10.8)') i,(nSpin/2.0_dp)*filling(i,1),excOcc(i,1)
     enddo
 
     TS = 0.0_dp
     do iSpin = 1, nSpin
       do iOrb = 1, nOrb
-        hOcc = eocc(iOrb, iSpin)
+        hOcc = excOcc(iOrb, iSpin)
         if (hOcc > epsilon(0.0_dp) .and. (1-hOcc) > epsilon(0.0_dp)) then
           TS = TS - (hOcc * log(hOcc) + (1-hOcc)*log(1-hOcc))
         endif
