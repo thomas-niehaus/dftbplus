@@ -641,9 +641,13 @@ contains
       ! For fractional occupations, xpy holds (X+Y) * sqrOccIA. Need for renormalization.
       if (tFracOcc) then
         do iLev = 1, this%nExc
-          xpy(:,iLev) = xpy(:,iLev)/rpa%sqrOccIA
+          ! xpy(:,iLev) = xpy(:,iLev)/rpa%sqrOccIA
+          ! xpy(:,iLev) = xpy(:,iLev)/sqrt(sum(xpy(:,iLev)**2))
+          ! xmy(:,iLev) = xmy(:,iLev)/rpa%sqrOccIA
+          ! xmy(:,iLev) = xmy(:,iLev)/sqrt(sum(xmy(:,iLev)**2))
+          xpy(:,iLev) = xpy(:,iLev)*rpa%sqrOccIA
           xpy(:,iLev) = xpy(:,iLev)/sqrt(sum(xpy(:,iLev)**2))
-          xmy(:,iLev) = xmy(:,iLev)/rpa%sqrOccIA
+          xmy(:,iLev) = xmy(:,iLev)*rpa%sqrOccIA
           xmy(:,iLev) = xmy(:,iLev)/sqrt(sum(xmy(:,iLev)**2))
         end do
       end if
@@ -1659,17 +1663,22 @@ contains
       do b = rpa%nocc_ud(s) + 1, a
         ibs = rpa%iaTrans(i, b, s)
         ab = rpa%iaTrans(a, b, s) - svv(s)
-        tmp1 = rpa%frOcc(i,s) * (xpy(ias) * xpy(ibs) + xmy(ias) * xmy(ibs))
-        tmp2 = omega * rpa%frOcc(i,s) * (xpy(ias) * xmy(ibs) + xmy(ias) * xpy(ibs))
+        !!tmp1 = (rpa%frOcc(i,s))**2 * (xpy(ias) * xpy(ibs) + xmy(ias) * xmy(ibs))
+        tmp1 = (xpy(ias) * xpy(ibs) + xmy(ias) * xmy(ibs))
+        !!tmp2 = omega * (rpa%frOcc(i,s))**2 * (xpy(ias) * xmy(ibs) + xmy(ias) * xpy(ibs))
+        tmp2 = omega * (xpy(ias) * xmy(ibs) + xmy(ias) * xpy(ibs))
         t(a,b,s) = t(a,b,s) + 0.5_dp * tmp1
         ! to prevent double counting
         if (a /= b) then
           t(b,a,s) = t(b,a,s) + 0.5_dp * tmp1
         end if
-        t(a,b,s) = t(a,b,s) * rpa%frOcc(a,s) * rpa%frOcc(b,s)
-        t(b,a,s) = t(b,a,s) * rpa%frOcc(a,s) * rpa%frOcc(b,s)
+        !t(a,b,s) = t(a,b,s) * rpa%frOcc(a,s) * rpa%frOcc(b,s)
+        !t(b,a,s) = t(b,a,s) * rpa%frOcc(a,s) * rpa%frOcc(b,s)
+        t(a,b,s) = t(a,b,s) 
+        t(b,a,s) = t(b,a,s) 
         ! Note: diagonal elements will be multiplied by 0.5 later.
-        wvv(ab,s) = wvv(ab,s) + (grndEigVal(i,s) * tmp1 + tmp2) * rpa%frOcc(a,s) * rpa%frOcc(b,s)
+        !wvv(ab,s) = wvv(ab,s) + (grndEigVal(i,s) * tmp1 + tmp2) * rpa%frOcc(a,s) * rpa%frOcc(b,s)
+        wvv(ab,s) = wvv(ab,s) + (grndEigVal(i,s) * tmp1 + tmp2) 
       end do
 
       ! Build t_ij = 0.5 * sum_a (X+Y)_ia (X+Y)_ja + (X-Y)_ia (X-Y)_ja and 1 / (1 + delta_ij) Q_ij
@@ -1681,8 +1690,10 @@ contains
         ! ADG: assume no constraint on occ space atm (nocc_r = nocc)
         ! otherwise first argument should be nocc - nocc_r
         ij = rpa%iaTrans(i, j, s) - soo(s)
-        tmp1 = rpa%frOcc(a,s) * (xpy(ias) * xpy(jas) + xmy(ias) * xmy(jas))
-        tmp2 = omega * rpa%frOcc(a,s) * (xpy(ias) * xmy(jas) + xmy(ias) * xpy(jas))
+        !!tmp1 = (rpa%frOcc(a,s))**2 * (xpy(ias) * xpy(jas) + xmy(ias) * xmy(jas))
+        tmp1 = (xpy(ias) * xpy(jas) + xmy(ias) * xmy(jas))
+        !!tmp2 = omega * (rpa%frOcc(a,s))**2 * (xpy(ias) * xmy(jas) + xmy(ias) * xpy(jas))
+        tmp2 = omega * (xpy(ias) * xmy(jas) + xmy(ias) * xpy(jas))
         ! Note, there is a typo in Heringer et al. J. Comp Chem 28, 2589.
         ! The sign must be negative see Furche, J. Chem. Phys, 117 7433 (2002).
         t(i,j,s) = t(i,j,s) - 0.5_dp * tmp1
@@ -1690,9 +1701,12 @@ contains
         if (i /= j) then
           t(j,i,s) = t(j,i,s) - 0.5_dp * tmp1
         end if
-        t(i,j,s) = t(i,j,s) * rpa%frOcc(i,s) * rpa%frOcc(j,s)
-        t(j,i,s) = t(j,i,s) * rpa%frOcc(i,s) * rpa%frOcc(j,s)
-        woo(ij,s) = woo(ij,s) + (-grndEigVal(a,s) * tmp1 + tmp2) * rpa%frOcc(i,s) * rpa%frOcc(j,s)
+        !!t(i,j,s) = t(i,j,s) * rpa%frOcc(i,s) * rpa%frOcc(j,s)
+        !!t(j,i,s) = t(j,i,s) * rpa%frOcc(i,s) * rpa%frOcc(j,s)
+        t(i,j,s) = t(i,j,s)
+        t(j,i,s) = t(j,i,s)
+        !!woo(ij,s) = woo(ij,s) + (-grndEigVal(a,s) * tmp1 + tmp2) * rpa%frOcc(i,s) * rpa%frOcc(j,s)
+        woo(ij,s) = woo(ij,s) + (-grndEigVal(a,s) * tmp1 + tmp2) 
       end do
 
     end do
@@ -3040,7 +3054,8 @@ contains
       if (eval(ii) > 0.0_dp) then
 
         ! calculate weight of single particle transitions
-        wvec(:) = xpy(:,ii)**2 * rpa%frOccIA
+        !!wvec(:) = xpy(:,ii)**2 * rpa%frOccIA
+        wvec(:) = xpy(:,ii)**2
         wvnorm = 1.0_dp / sqrt(sum(wvec**2))
         wvec(:) = wvec * wvnorm
 
@@ -3080,7 +3095,8 @@ contains
             if (updwn) sign = "U"
           end if
           write(fdXPlusY%unit, '(1x,i5,3x,a,3x,ES17.10)') ii, sign, sqrt(eval(ii))
-          write(fdXPlusY%unit, '(6(1x,ES17.10))') xpy(:,ii) * rpa%frOccIA
+          !!write(fdXPlusY%unit, '(6(1x,ES17.10))') xpy(:,ii) * rpa%frOccIA
+          write(fdXPlusY%unit, '(6(1x,ES17.10))') xpy(:,ii)
         endif
 
         if (fdTrans%isConnected()) then
@@ -5464,7 +5480,8 @@ contains
     atomicTransQ(:) = 0.0_dp
     do ia = 1, rpa%nxov_rd
       qia(:) = transChrg%qTransIA(ia, env, denseDesc, ovrXev, grndEigVecs, rpa%getIA, rpa%win)
-      atomicTransQ(:) = atomicTransQ + preFactor * qia * rpa%frOccIA(ia) * xpy(ia,lr%nstat)
+      !!atomicTransQ(:) = atomicTransQ + preFactor * qia * rpa%frOccIA(ia) * xpy(ia,lr%nstat)
+      atomicTransQ(:) = atomicTransQ + preFactor * qia * xpy(ia,lr%nstat)
     end do
 
     call openfile(fdTransQ, transChrgOut, mode="w")
@@ -5538,14 +5555,28 @@ contains
         excOcc(a, s) = excOcc(a, s) + 0.5_dp * xpy(ias) * xmy(ias) 
       end do
     else
-    mat(:,:) = 0.0_dp
-    do iSpin = 1, nSpin
-      do iOrb = 1, nOrb
-        mat(iOrb,iOrb) =  (nSpin/2.0_dp) * filling(iOrb,iSpin)
+      mat(:,:) = 0.0_dp
+      do iSpin = 1, nSpin
+        do iOrb = 1, nOrb
+          mat(iOrb,iOrb) =  (nSpin/2.0_dp) * filling(iOrb,iSpin)
+        enddo
+        mat(:,:) = mat(:,:) +  (nSpin/2.0_dp) * t(:,:,iSpin)
+        call heev(mat, excOcc(:,iSpin), 'U', 'N', info)
       enddo
-      mat(:,:) = mat(:,:) + t(:,:,iSpin)
-      call heev(mat, excOcc(:,iSpin), 'U', 'N', info)
-    enddo
+    !   do i = 1, size(mat,dim=1)
+    !     print *,'GooStuff', i,  0.5*t(i,i,1)
+    !   enddo
+    ! excOcc = 0.0_dp
+    ! mat(:,:) = 0.0_dp
+    ! do iSpin = 1, nSpin
+    !   mat(:,:) = 0.5*t(:,:,iSpin)
+    !   call heev(mat, excOcc(:,iSpin), 'U', 'N', info)
+    !   ! do iOrb = 1, nOrb
+    !   !   excOcc(iOrb,iSpin) =  excOcc(iOrb,iSpin) - (nSpin/2.0_dp) * filling(iOrb,iSpin)
+    !   ! enddo    
+      
+    ! enddo
+    
     end if
   
     do i = 1, size(filling, dim=1)

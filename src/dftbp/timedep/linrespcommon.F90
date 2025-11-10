@@ -1401,7 +1401,8 @@ contains
 
     osz = 0.0_dp
     do ii = 1, 3
-      rtmp = sum(transd(:,ii) * frOccIA * xpy)
+      !!rtmp = sum(transd(:,ii) * frOccIA * xpy)
+      rtmp = sum(transd(:,ii) * xpy)
       osz = osz + rtmp * rtmp
     end do
     osz = twothird * omega * osz
@@ -1439,7 +1440,8 @@ contains
     !$OMP PARALLEL DO DEFAULT(SHARED) PRIVATE(ii) SCHEDULE(RUNTIME)
     do ii = 1, size(xpy, dim=2)
       do ll = 1, 3
-        tdip(ii, ll) = sum(transd(:,ll) * frOccIA * xpy(:,ii))
+        !!tdip(ii, ll) = sum(transd(:,ll) * frOccIA * xpy(:,ii))
+        tdip(ii, ll) = sum(transd(:,ll) * xpy(:,ii))
       end do
     end do
     !$OMP END PARALLEL DO
@@ -1573,7 +1575,8 @@ contains
   #:endif
 
     do i = 1, nexc
-      TDvec(:) = rpa%frOccIA * xpy(:,i)
+      !!TDvec(:) = rpa%frOccIA * xpy(:,i)
+      TDvec(:) = xpy(:,i)
       TDvnorm = 1.0_dp / sqrt(sum(TDvec**2))
       TDvec(:) = TDvec * TDvnorm
       TDvec_sq = TDvec**2
@@ -2000,7 +2003,7 @@ contains
       end do
       do ias = 1, nxov
         i = getIA(win(ias),1)
-        a = getIA(win(ias),2)
+        a = getIA(win(ias),2)a
         s = getIA(win(ias),3)
         frOccIA(ias) = frOcc(i,s) * frOcc(a,s)
       end do
