@@ -2003,7 +2003,7 @@ contains
       end do
       do ias = 1, nxov
         i = getIA(win(ias),1)
-        a = getIA(win(ias),2)a
+        a = getIA(win(ias),2)
         s = getIA(win(ias),3)
         frOccIA(ias) = frOcc(i,s) * frOcc(a,s)
       end do

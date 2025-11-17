@@ -768,7 +768,7 @@ contains
 
           call calcPMatrix(rpa, t, rhs, pc)
 
-          call naturalOccAndEntropy(rpa, filling, t, xpy(:,nstat), xmy(:,nstat), tempElec, TS)
+          call naturalOccAndEntropy(rpa, filling, pc, xpy(:,nstat), xmy(:,nstat), tempElec, TS)
 
           call writeCoeffs(pc, grndEigVecs, filling, this%writeCoeffs, this%tGrndState, occNatural,&
             & naturalOrbs)
@@ -2045,11 +2045,12 @@ contains
     allocate(P(nxov))
     do ia = 1, nxov
       qTr(:) = transChrg%qTransIA(ia, env, denseDesc, ovrXev, grndEigVecs, rpa%getIA, rpa%win)
+      qTr(:) = rpa%sqrOccIA(ia) * qTr
       call hemv(qTmp, gammaMat, qTr)
       if (.not. lr%tSpin) then
-        rs = 4.0_dp * dot_product(qTr, qTmp) + rpa%wij(ia)
+        rs = 4.0_dp * dot_product(qTr, qTmp) 
       else
-        rs = 2.0_dp * dot_product(qTr, qTmp) + rpa%wij(ia)
+        rs = 2.0_dp * dot_product(qTr, qTmp) 
         rs = rs + 2.0_dp * sum(qTr * qTr * lr%spinW(species0))
       end if
 
@@ -2069,6 +2070,8 @@ contains
         rs = rs - cExchange * dot_product(qTr, qTmp)
       end if
 
+      rs = rs * rpa%sqrOccIA(ia) + rpa%wij(ia)
+
       P(ia) = 1.0_dp / rs
     end do
 
@@ -2083,7 +2086,7 @@ contains
     call actionAplusB(iGlobal, fGlobal, env, orb, lr, rpa, transChrg, 'S', denseDesc, species0,&
         & ovrXev, grndEigVecs, gammaMat, .true., rhs2, rkm1, lrGamma)
 
-    rkm1(:) = rhs - rkm1
+    rkm1(:) = rhs / rpa%sqrOccIA - rkm1
     zkm1(:) = P * rkm1
     pkm1(:) = zkm1
 
@@ -2124,7 +2127,7 @@ contains
 
     end do
 
-    rhs(:) = rhs2(:)
+    rhs(:) = rhs2(:) * rpa%sqrOccIA(:)
 
   end subroutine solveZVectorPrecond
 
