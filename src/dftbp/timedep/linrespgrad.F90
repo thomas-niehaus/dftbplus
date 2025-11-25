@@ -212,7 +212,7 @@ contains
     character(lc) :: tmpStr
 
     real(dp) :: energyThreshold
-    real(dp) :: excNatTS
+    real(dp) :: excNatTS, rNorm
 
     integer :: nStat
 
@@ -639,16 +639,14 @@ contains
       call env%globalTimer%stopTimer(globalTimers%lrSolver)
 
       ! For fractional occupations, xpy holds (X+Y) * sqrOccIA. Need for renormalization.
+      print *,'---> New Version'
       if (tFracOcc) then
         do iLev = 1, this%nExc
-          ! xpy(:,iLev) = xpy(:,iLev)/rpa%sqrOccIA
-          ! xpy(:,iLev) = xpy(:,iLev)/sqrt(sum(xpy(:,iLev)**2))
-          ! xmy(:,iLev) = xmy(:,iLev)/rpa%sqrOccIA
-          ! xmy(:,iLev) = xmy(:,iLev)/sqrt(sum(xmy(:,iLev)**2))
           xpy(:,iLev) = xpy(:,iLev)*rpa%sqrOccIA
-          xpy(:,iLev) = xpy(:,iLev)/sqrt(sum(xpy(:,iLev)**2))
           xmy(:,iLev) = xmy(:,iLev)*rpa%sqrOccIA
-          xmy(:,iLev) = xmy(:,iLev)/sqrt(sum(xmy(:,iLev)**2))
+          rNorm = sqrt(sum(xpy(:,iLev)*xmy(:,iLev)))
+          xpy(:,iLev) = xpy(:,iLev)/rNorm
+          xmy(:,iLev) = xmy(:,iLev)/rNorm
         end do
       end if
       
