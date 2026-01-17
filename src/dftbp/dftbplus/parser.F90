@@ -8150,6 +8150,16 @@ contains
         end if
       end associate
 
+    case ("langevin")
+
+      thermostatInp%thermostatType = thermostatTypes%langevin
+      allocate(thermostatInp%langevin)
+      call readTempOrTempProfile_(thermNode, maxRun, tempProfileInp)
+      call getChildValue(thermNode, "timeconstant", thermostatInp%langevin%gamma,&
+          & modifier=modifier, child=child3)
+      call convertUnitHsd(char(modifier), timeUnits, child3, thermostatInp%langevin%gamma)
+      thermostatInp%langevin%gamma = 1.0_dp / thermostatInp%langevin%gamma
+
     case ("nosehoover")
 
       thermostatInp%thermostatType = thermostatTypes%nhc

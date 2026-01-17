@@ -1069,6 +1069,32 @@ all of the atoms in the system.
 
 \end{description}
 
+\paragraph{Langevin\cb}
+\label{sec:dftbp.Langevin}
+
+Langevin thermostat~\cite{} which samples close to the NVT\index{NVT
+  ensemble} ensemble.
+
+\begin{ptable}
+  \kw{Temperature}      & r|m & & - & \\
+  \kw{TimeConstant}        & r   & & - & \\
+  \kw{AdaptFillingTemp} & l   & & No & \\
+\end{ptable}
+\begin{description}
+\item[\is{Temperature}]\modif{\modtype{energy}} Target temperature of
+  the thermostat.  It can be either a real value specifying a constant
+  temperature through the entire run or the \kwcb{TemperatureProfile}
+  method specifying a changing temperature.  (See
+  p.~\pref{sec:dftbp.TemperatureProfile}.)
+\item[\is{TimeConstant}]\modif{\modtype{time}} Is the characteristic
+  timescale for the temperature coupling.
+\item[\is{AdaptFillingTemp}] If \is{Yes}, the temperature of the
+  electron filling is always set to the current temperature of the
+  thermostat. (The appropriate tag for the temperature of the electron
+  filling is ignored.)
+
+\end{description}
+
 \paragraph{TemperatureProfile\cb}
 \label{sec:dftbp.TemperatureProfile}
 
