@@ -1658,9 +1658,10 @@ contains
 
     if (this%isLinResp) then
       call env%globalTimer%startTimer(globalTimers%lrExcitation)
+      print *,'fermi,', this%Ef*27.2114
       call calculateLinRespExcitations(env, this%linearResponse, this%parallelKS, this%scc,&
           & this%qOutput, this%q0, this%ints, this%eigvecsReal, this%eigen(:,1,:),&
-          & this%filling(:,1,:), this%coord, this%species, this%speciesName, this%orb,&
+          & this%filling(:,1,:), this%Ef, this%coord, this%species, this%speciesName, this%orb,&
           & this%skHamCont, this%skOverCont, autotestTag, this%taggedWriter, this%runId,&
           & this%neighbourList, this%nNeighbourSK, this%denseDesc, this%iSparseStart,&
           & this%img2CentCell, this%tWriteAutotest, this%tCasidaForces, this%tLinRespZVect,&
@@ -5379,7 +5380,7 @@ contains
 
   !> Do the linear response excitation calculation.
   subroutine calculateLinRespExcitations(env, linearResponse, parallelKS, sccCalc, qOutput, q0,&
-      & ints, eigvecsReal, eigen, filling, coord, species, speciesName, orb, skHamCont,&
+      & ints, eigvecsReal, eigen, filling, Ef, coord, species, speciesName, orb, skHamCont,&
       & skOverCont, autotestTag, taggedWriter, runId, neighbourList, nNeighbourSk, denseDesc,&
       & iSparseStart, img2CentCell, tWriteAutotest, tForces, tLinRespZVect, tPrintExcEigvecs,&
       & tPrintExcEigvecsTxt, nonSccDeriv, tempElec, excTS, dftbEnergy, energies, work, rhoSqrReal,&
@@ -5414,6 +5415,9 @@ contains
 
     !> Ground state fillings (orbital, kpoint)
     real(dp), intent(in) :: filling(:,:)
+
+    !> Fermi levels
+    real(dp), intent(in) :: Ef(:)    
 
     !> All atomic coordinates
     real(dp), intent(in) :: coord(:,:)
@@ -5554,10 +5558,10 @@ contains
         allocate(naturalOrbs(orb%nOrb, orb%nOrb, 1))
       end if
       call LinResp_addGradients(env, tSpin, linearResponse, denseDesc, eigvecsReal, eigen,&
-          & work, filling, coord(:,:nAtom), sccCalc, dQAtom, pSpecies0, neighbourList%iNeighbour,&
-          & img2CentCell, orb, skHamCont, skOverCont, fdAutotest, taggedWriter, hybridXc, tempElec,&
-          & excTS, dftbEnergy%Eexcited, energies, excitedDerivs, naCouplings, nonSccDeriv,&
-          &  rhoSqrReal, deltaRhoOut, occNatural, naturalOrbs)
+          & work, filling, Ef, coord(:,:nAtom), sccCalc, dQAtom, pSpecies0,&
+          & neighbourList%iNeighbour, img2CentCell, orb, skHamCont, skOverCont, fdAutotest,&
+          & taggedWriter, hybridXc, tempElec, excTS, dftbEnergy%Eexcited, energies, excitedDerivs,&
+          & naCouplings, nonSccDeriv, rhoSqrReal, deltaRhoOut, occNatural, naturalOrbs)
       if (tPrintExcEigvecs) then
         call writeRealEigvecs(env, runId, neighbourList, nNeighbourSK, denseDesc, iSparseStart,&
             & img2CentCell, pSpecies0, speciesName, orb, ints%overlap, parallelKS, &
@@ -5565,7 +5569,7 @@ contains
       end if
     else
       call linResp_calcExcitations(env, linearResponse, tSpin, denseDesc, eigvecsReal, eigen, work,&
-          & filling, coord(:,:nAtom), sccCalc, dQAtom, pSpecies0, neighbourList%iNeighbour,&
+          & filling, Ef, coord(:,:nAtom), sccCalc, dQAtom, pSpecies0, neighbourList%iNeighbour,&
           & img2CentCell, orb, fdAutotest, taggedWriter, hybridXc, tempElec, excTS,&
           & dftbEnergy%Eexcited, energies)
     end if

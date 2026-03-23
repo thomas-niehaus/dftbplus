@@ -1327,13 +1327,11 @@ contains
     ! do iSpin = 1, nSpin
     !   do ii = 1, norb - 1
     !     do aa = ii, norb
-    !       !!if (filling(ii, iSpin) > filling(aa, iSpin) + elecTolMax) then
-    !         if(filling(ii,iSpin) * nSpin >= 1.0_dp .and. filling(aa,iSpin) * nSpin <= 1.0_dp) then
-    !           ind = ind + 1
-    !           wij(ind) = grndEigVal(aa, iSpin) - grndEigVal(ii, iSpin)
-    !           getIA(ind,:) = [ii, aa, iSpin]
-    !         end if
-    !       !!end if
+    !       if (filling(ii, iSpin) > filling(aa, iSpin) + elecTolMax) then
+    !         ind = ind + 1
+    !         wij(ind) = grndEigVal(aa, iSpin) - grndEigVal(ii, iSpin)
+    !         getIA(ind,:) = [ii, aa, iSpin]
+    !       end if
     !     end do
     !   end do
     ! end do
@@ -1371,12 +1369,64 @@ contains
       end do
       off = (nVir(1) * (nVir(1) + 1)) / 2
     end do
+    
+    ! ind = 0
+
+    ! do iSpin = 1, nSpin
+    !   do ii = 1, norb - 1
+    !     do aa = ii, norb
+    !       if (filling(ii, iSpin) > filling(aa, iSpin) + elecTolMax) then
+    !         !!write(*,'(2x,i3,x,i3,x,i3,x,f10.6,x,f10.6)') iSpin,ii,aa,filling(ii, iSpin),filling(aa, iSpin)
+    !         !!if(filling(ii,iSpin) * nSpin >= 1.0_dp .and. filling(aa,iSpin) * nSpin <= 1.0_dp) then
+    !           ind = ind + 1
+    !           wij(ind) = grndEigVal(aa, iSpin) - grndEigVal(ii, iSpin)
+    !           getIA(ind,:) = [ii, aa, iSpin]
+    !         end if
+    !       !!end if
+    !     end do
+    !   end do
+    ! end do
+    ! write(57,*) wij
+
+    ! ! do iSpin = 1, nSpin
+    ! !   do ii = 1, nOcc(iSpin)
+    ! !     do aa = nOcc(iSpin) + 1, norb
+    ! !       ind = ind + 1
+    ! !       wij(ind) = grndEigVal(aa, iSpin) - grndEigVal(ii, iSpin)
+    ! !       getIA(ind,:) = [ii, aa, iSpin]
+    ! !     end do
+    ! !   end do
+    ! ! end do
+
+    ! off = 0
+
+    ! do iSpin = 1, nSpin
+    !   do ii = 1, nOcc(iSpin)
+    !     do jj = 1, ii
+    !       ind = jj + ((ii - 1) * ii) / 2 + off
+    !       getIJ(ind,:) = [ii, jj, iSpin]
+    !     end do
+    !   end do
+    !   off = (nOcc(1) * (nOcc(1) + 1)) / 2
+    ! end do
+
+    ! off = 0
+
+    ! do iSpin = 1, nSpin
+    !   do aa = 1, norb - nOcc(iSpin)
+    !     do bb = 1, aa
+    !       ind = bb + ((aa  - 1) * aa) / 2 + off
+    !       getAB(ind,:) = [aa + nOcc(iSpin), bb + nOcc(iSpin), iSpin]
+    !     end do
+    !   end do
+    !   off = (nVir(1) * (nVir(1) + 1)) / 2
+    ! end do
 
   end subroutine getSPExcitations
 
 
   !> Calculate dipole moment for transitions.
-  function oscillatorStrength(tSpin, transd, omega, xpy, frOccIA) result(osz)
+  function oscillatorStrength(tSpin, transd, omega, xpy, sqrOccIA) result(osz)
 
     !> Spin-polarized calculation?
     logical, intent(in) :: tSpin
@@ -1390,8 +1440,8 @@ contains
     !> Excitation eigenvector (X+Y) for state in question
     real(dp), intent(in) :: xpy(:)
 
-    !> Product of occupation factors for transition i -> a
-    real(dp), intent(in) :: frOccIA(:)
+    !> Product of sqrt of occupation factors for transition i -> a
+    real(dp), intent(in) :: sqrOccIA(:)
 
     !> Oscillator strength
     real(dp) :: osz
@@ -1402,7 +1452,7 @@ contains
     osz = 0.0_dp
     do ii = 1, 3
       !!rtmp = sum(transd(:,ii) * frOccIA * xpy)
-      rtmp = sum(transd(:,ii) * xpy)
+      rtmp = sum(transd(:,ii) * xpy * sqrOccIA)
       osz = osz + rtmp * rtmp
     end do
     osz = twothird * omega * osz
@@ -1995,10 +2045,10 @@ contains
     if (tFracOcc) then
       do s = 1, nSpin
         do i = 1, nocc_ud(s)
-          frOcc(i,s) = (nSpin/2.0_dp) * occNr(i,s)
+          frOcc(i,s) = sqrt((nSpin/2.0_dp) * occNr(i,s))
         end do
         do i = nocc_ud(s) + 1, nOrb
-          frOcc(i,s) = 1.0_dp - ((nSpin/2.0_dp) * occNr(i,s))
+          frOcc(i,s) = sqrt(1.0_dp - (nSpin/2.0_dp) * occNr(i,s))
         end do
       end do
       do ias = 1, nxov
@@ -2015,5 +2065,60 @@ contains
     endif
     
 
-  end subroutine getOccFactors 
+  end subroutine getOccFactors
+
+  subroutine finalFracTrafo(env, lr, rpa, t, z, wov, woo, wvv)
+        !> Environment settings
+    type(TEnvironment), intent(inout) :: env
+
+    !> Data structure for linear response
+    type(TLinResp), intent(in) :: lr
+
+    !> Run time parameters of the Casida routine
+    type(TCasidaParameter), intent(in) :: rpa
+
+    !> T matrix
+    real(dp), intent(out) :: t(:,:,:)
+
+    !> Right hand side for the Furche solution
+    real(dp), intent(out) :: z(:)   
+
+    !> W vector occupied-virtual part
+    real(dp), intent(out) :: wov(:)
+
+    !> W vector occupied part
+    real(dp), intent(out) :: woo(:,:)
+
+    !> W vector virtual part
+    real(dp), intent(out) :: wvv(:,:)
+
+    integer :: soo(2), svv(2), s, ij, i, j, ab, a, b
+    real(dp) :: frOcc, trace
+
+    soo(:) = [0, rpa%nxoo_ud(1)]
+    svv(:) = [0, rpa%nxvv_ud(1)]
+    
+    z = z * rpa%sqrOccIA
+    wov = wov * rpa%sqrOccIA
+
+    do s = 1, size(t,dim=3)
+      do ij = 1, rpa%nxoo_ud(s)
+        i = rpa%getIJ(ij + soo(s), 1)
+        j = rpa%getIJ(ij + soo(s), 2)
+        frOcc = rpa%frOcc(i,s) * rpa%frOcc(j,s)
+        t(i,j,s) = t(i,j,s) * frOcc
+        t(j,i,s) = t(i,j,s)
+        woo(ij,s) = woo(ij,s) * frOcc
+      end do
+      do ab = 1, rpa%nxvv_ud(s)
+        a = rpa%getAB(ab + svv(s), 1)
+        b = rpa%getAB(ab + svv(s), 2)
+        frOcc = rpa%frOcc(a,s) * rpa%frOcc(b,s)
+        t(a,b,s) = t(a,b,s) * frOcc
+        t(b,a,s) = t(a,b,s)
+        wvv(ab,s) = wvv(ab,s) * frOcc       
+      end do
+    end do
+    
+  end subroutine finalFracTrafo
 end module dftbp_timedep_linrespcommon

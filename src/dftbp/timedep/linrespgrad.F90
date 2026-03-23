@@ -35,7 +35,8 @@ module dftbp_timedep_linrespgrad
   use dftbp_timedep_linrespcommon, only : actionAminusB, actionAplusB, calcTransitionDipoles,&
       & dipselect, excitedDipoleOut, excitedQOut, getExcSpin, getSPExcitations, getSqrOcc,&
       & incMemStratmann, indxov, initialSubSpaceMatrixApmB, oscillatorStrength, rindxov_array,&
-      & transitionDipole, twothird, writeExcMulliken, writeSPExcitations, getOccFactors
+      & transitionDipole, twothird, writeExcMulliken, writeSPExcitations, getOccFactors,& 
+      & finalFracTrafo
   use dftbp_timedep_linresptypes, only : linrespSolverTypes, TCasidaParameter,&
       & TCasidaParameter_init, TLinResp
   use dftbp_timedep_transcharges, only : transq, TTransCharges, TTransCharges_init
@@ -86,9 +87,9 @@ contains
   !> This subroutine analytically calculates excitations and gradients of excited state energies
   !! based on Time Dependent DFRT
   subroutine LinRespGrad_old(env, this, denseDesc, grndEigVecs, grndEigVal, sccCalc, dq, coord0,&
-      & SSqr, filling, species0, iNeighbour, img2CentCell, orb, fdTagged, taggedWriter, hybridXc,&
-      & tempElec, TS, omega, allOmega, deltaRho, shift, skHamCont, skOverCont, excgrad, nacv,&
-      & derivator, rhoSqr, occNatural, naturalOrbs)
+      & SSqr, filling, Ef, species0, iNeighbour, img2CentCell, orb, fdTagged, taggedWriter,&
+      & hybridXc, tempElec, TS, omega, allOmega, deltaRho, shift, skHamCont, skOverCont, excgrad,&
+      & nacv, derivator, rhoSqr, occNatural, naturalOrbs)
 
     !> Environment settings
     type(TEnvironment), intent(inout) :: env
@@ -118,6 +119,9 @@ contains
 
     !> Occupations for the states
     real(dp), intent(in) :: filling(:,:)
+
+    !> Fermi levels
+    real(dp), intent(in) :: Ef(:)   
 
     !> Chemical species of each atom
     integer, intent(in) :: species0(:)
@@ -314,32 +318,12 @@ contains
     allocate(nvir_ud(nSpin))
     nocc_ud(:) = 0
     nvir_ud(:) = 0
-    ! Bad hack for degeneracy problem
-
-    nDegOrb = 0
     do iSpin = 1, nSpin
       do i = 1, norb
-        if (abs(filling(i,iSpin) * nSpin -1.0_dp) < 100*elecTolMax) then
-          nDegOrb = nDegOrb + 1
-        end if
-      enddo
-    enddo
-
-    iDegOrb = 0
-    do iSpin = 1, nSpin
-      do i = 1, norb
-        !!if (filling(i,iSpin) > elecTolMax) then
-        if (abs(filling(i,iSpin) * nSpin -1.0_dp) < 100*elecTolMax) then
-          iDegOrb = iDegOrb + 1
-          if (iDegOrb <= nDegOrb/2) then
-            nocc_ud(iSpin) = nocc_ud(iSpin) + 1
-          else
-            nvir_ud(iSpin) = nvir_ud(iSpin) + 1
-          end if
-        else if (filling(i,iSpin) * nSpin >= 1.0_dp) then
-          nocc_ud(iSpin) = nocc_ud(iSpin) + 1
-        else
+        if(grndEigVal(i,iSpin) > Ef(iSpin) + elecTolMax) then
           nvir_ud(iSpin) = nvir_ud(iSpin) + 1
+        else
+          nocc_ud(iSpin) = nocc_ud(iSpin) + 1
         end if
       end do
     end do
@@ -349,6 +333,77 @@ contains
       nxov_ud(iSpin) = nocc_ud(iSpin) * nvir_ud(iSpin)
     end do
     nxov = sum(nxov_ud)
+
+    ! ! count initial number of transitions from occupied to empty states
+    ! allocate(nxov_ud(nSpin))
+    ! nxov_ud = 0
+    ! do iSpin = 1, nSpin
+    !   !$OMP PARALLEL DO DEFAULT(SHARED) PRIVATE(i,j) SCHEDULE(RUNTIME) REDUCTION(+:nxov_ud)
+    !   do i = 1, norb - 1
+    !     do j = i, norb
+    !       if (filling(i,iSpin) > filling(j,iSpin) + elecTolMax) then
+    !         nxov_ud(iSpin) = nxov_ud(iSpin) + 1
+    !       end if
+    !     end do
+    !   end do
+    !   !$OMP  END PARALLEL DO
+    ! end do
+    ! nxov = sum(nxov_ud)
+    print *,'sums', sum(filling(:,1)),sum(filling(:,2))
+
+    ! ! # occupied/virtual states per spin channel
+    ! allocate(nocc_ud(nSpin))
+    ! allocate(nvir_ud(nSpin))
+    ! nocc_ud(:) = 0
+    ! nvir_ud(:) = 0
+    ! do iSpin = 1, nSpin
+    !   do i = 1, norb
+    !     if (filling(i,iSpin) > elecTolMax) then
+    !       nocc_ud(iSpin) = nocc_ud(iSpin) + 1
+    !     else
+    !       nvir_ud(iSpin) = nvir_ud(iSpin) + 1
+    !     end if
+    !   end do
+    ! end do
+    print *,' Occ: ',nocc_ud(:)
+    print *,' Vir: ',nvir_ud(:)
+    print *,' nxov', nxov, Ef
+    
+    ! ! Bad hack for degeneracy problem
+
+    ! nDegOrb = 0
+    ! do iSpin = 1, nSpin
+    !   do i = 1, norb
+    !     if (abs(filling(i,iSpin) * nSpin -1.0_dp) < 100*elecTolMax) then
+    !       nDegOrb = nDegOrb + 1
+    !     end if
+    !   enddo
+    ! enddo
+
+    ! iDegOrb = 0
+    ! do iSpin = 1, nSpin
+    !   do i = 1, norb
+    !     !!if (filling(i,iSpin) > elecTolMax) then
+    !     if (abs(filling(i,iSpin) * nSpin -1.0_dp) < 100*elecTolMax) then
+    !       iDegOrb = iDegOrb + 1
+    !       if (iDegOrb <= nDegOrb/2) then
+    !         nocc_ud(iSpin) = nocc_ud(iSpin) + 1
+    !       else
+    !         nvir_ud(iSpin) = nvir_ud(iSpin) + 1
+    !       end if
+    !     else if (filling(i,iSpin) * nSpin >= 1.0_dp) then
+    !       nocc_ud(iSpin) = nocc_ud(iSpin) + 1
+    !     else
+    !       nvir_ud(iSpin) = nvir_ud(iSpin) + 1
+    !     end if
+    !   end do
+    ! end do
+
+    ! allocate(nxov_ud(nSpin))
+    ! do iSpin = 1, nSpin
+    !   nxov_ud(iSpin) = nocc_ud(iSpin) * nvir_ud(iSpin)
+    ! end do
+    ! nxov = sum(nxov_ud)
     
     mHOMO = maxval(nocc_ud)
     mLUMO = minval(nocc_ud) + 1
@@ -481,6 +536,8 @@ contains
       ! do not require stability, use the usual routine to sort, saving an O(N) workspace
       call index_heap_sort(win, wij)
     end if
+    write(55,*) wij
+    write(56,*) win
     wij(:) = wij(win)
 
     ! Build square root of occupation difference between virtual and occupied states
@@ -573,7 +630,7 @@ contains
     ! Input arrays are deallocated on return
     call TCasidaParameter_init(rpa, nocc_ud, nvir_ud, nxoo_ud, nxvv_ud, nxov_ud, nxov_rd,&
         & iaTrans, getIA, getIJ, getAB, win, wij, sqrOccIA, frOcc, frOccIA, tHybridXc, tZVector)
- 
+
     if (this%writeXplusY) then
       call openfile(fdXPlusY, XplusYOut, mode="w")
     end if
@@ -638,17 +695,20 @@ contains
       end select
       call env%globalTimer%stopTimer(globalTimers%lrSolver)
 
-      ! For fractional occupations, xpy holds (X+Y) * sqrOccIA. Need for renormalization.
+      ! For fractional occupations, xpy holds (X+Y) * sqrOccIA. 
+      ! The correctly normalized vector is however  (X+Y)^T = (X+Y) * sqrOccIA^2. We renormalize, 
+      ! and continue working with (X+Y) * sqrOccIA, which simplifies equations. End results
+      ! need proper multiplication with sqrOccIA. 
       print *,'---> New Version'
-      if (tFracOcc) then
-        do iLev = 1, this%nExc
-          xpy(:,iLev) = xpy(:,iLev)*rpa%sqrOccIA
-          xmy(:,iLev) = xmy(:,iLev)*rpa%sqrOccIA
-          rNorm = sqrt(sum(xpy(:,iLev)*xmy(:,iLev)))
-          xpy(:,iLev) = xpy(:,iLev)/rNorm
-          xmy(:,iLev) = xmy(:,iLev)/rNorm
-        end do
-      end if
+      ! if (tFracOcc) then
+      !   do iLev = 1, this%nExc
+      !     xpy(:,iLev) = xpy(:,iLev)*rpa%sqrOccIA
+      !     xmy(:,iLev) = xmy(:,iLev)*rpa%sqrOccIA
+      !     rNorm = sqrt(sum(xpy(:,iLev)*xmy(:,iLev)))
+      !     xpy(:,iLev) = xpy(:,iLev)/(rNorm * rpa%sqrOccIA)
+      !     xmy(:,iLev) = xmy(:,iLev)/(rNorm * rpa%sqrOccIA)
+      !   end do
+      ! end if
       
       ! Excitation oscillator strengths for resulting states
       call getOscillatorStrengths(this, rpa, sym, eval, xpy, snglPartTransDip(1:rpa%nxov_rd,:),&
@@ -762,11 +822,13 @@ contains
             & grndEigVecs, gammaMat, lrGamma, rhs)
 
           call calcWVectorZ(env, this, rpa, transChrg, denseDesc, species0, ovrXev, grndEigVecs,&
-            & grndEigVal, gammaMat, lrGamma, rhs, wov, woo, wvv)
+              & grndEigVal, gammaMat, lrGamma, rhs, wov, woo, wvv)
 
           call calcPMatrix(rpa, t, rhs, pc)
 
           call naturalOccAndEntropy(rpa, filling, pc, xpy(:,nstat), xmy(:,nstat), tempElec, TS)
+
+          call finalFracTrafo(env, this, rpa, t, rhs, wov, woo, wvv)
 
           call writeCoeffs(pc, grndEigVecs, filling, this%writeCoeffs, this%tGrndState, occNatural,&
             & naturalOrbs)
@@ -1528,7 +1590,7 @@ contains
     !$OMP PARALLEL DO DEFAULT(SHARED) PRIVATE(ii) SCHEDULE(RUNTIME)
     do ii = 1, size(xpy, dim=2)
       osz(ii) = oscillatorStrength(lr%tSpin, snglPartTransDip, sqrt(eval(ii)), xpy(:,ii),&
-          & rpa%frOccIA)
+          & rpa%sqrOccIA)
     end do
     !$OMP  END PARALLEL DO
 
@@ -1615,7 +1677,7 @@ contains
     real(dp), allocatable :: xpyqds(:), gamxpyqds(:)
     real(dp), allocatable :: vecHvvXpY(:), vecHvvXmY(:), vecHooXpY(:), vecHooXmY(:)
     real(dp), allocatable :: vecHovT(:), vecHooT(:)
-    real(dp) :: tmp1, tmp2, fact
+    real(dp) :: tmp1, tmp2, fact, frOcc
     logical :: tSpin
 
     nxov = size(rhs)
@@ -1661,21 +1723,16 @@ contains
       do b = rpa%nocc_ud(s) + 1, a
         ibs = rpa%iaTrans(i, b, s)
         ab = rpa%iaTrans(a, b, s) - svv(s)
-        !!tmp1 = (rpa%frOcc(i,s))**2 * (xpy(ias) * xpy(ibs) + xmy(ias) * xmy(ibs))
         tmp1 = (xpy(ias) * xpy(ibs) + xmy(ias) * xmy(ibs))
-        !!tmp2 = omega * (rpa%frOcc(i,s))**2 * (xpy(ias) * xmy(ibs) + xmy(ias) * xpy(ibs))
         tmp2 = omega * (xpy(ias) * xmy(ibs) + xmy(ias) * xpy(ibs))
         t(a,b,s) = t(a,b,s) + 0.5_dp * tmp1
         ! to prevent double counting
         if (a /= b) then
           t(b,a,s) = t(b,a,s) + 0.5_dp * tmp1
         end if
-        !t(a,b,s) = t(a,b,s) * rpa%frOcc(a,s) * rpa%frOcc(b,s)
-        !t(b,a,s) = t(b,a,s) * rpa%frOcc(a,s) * rpa%frOcc(b,s)
         t(a,b,s) = t(a,b,s) 
         t(b,a,s) = t(b,a,s) 
         ! Note: diagonal elements will be multiplied by 0.5 later.
-        !wvv(ab,s) = wvv(ab,s) + (grndEigVal(i,s) * tmp1 + tmp2) * rpa%frOcc(a,s) * rpa%frOcc(b,s)
         wvv(ab,s) = wvv(ab,s) + (grndEigVal(i,s) * tmp1 + tmp2) 
       end do
 
@@ -1688,9 +1745,7 @@ contains
         ! ADG: assume no constraint on occ space atm (nocc_r = nocc)
         ! otherwise first argument should be nocc - nocc_r
         ij = rpa%iaTrans(i, j, s) - soo(s)
-        !!tmp1 = (rpa%frOcc(a,s))**2 * (xpy(ias) * xpy(jas) + xmy(ias) * xmy(jas))
         tmp1 = (xpy(ias) * xpy(jas) + xmy(ias) * xmy(jas))
-        !!tmp2 = omega * (rpa%frOcc(a,s))**2 * (xpy(ias) * xmy(jas) + xmy(ias) * xpy(jas))
         tmp2 = omega * (xpy(ias) * xmy(jas) + xmy(ias) * xpy(jas))
         ! Note, there is a typo in Heringer et al. J. Comp Chem 28, 2589.
         ! The sign must be negative see Furche, J. Chem. Phys, 117 7433 (2002).
@@ -1699,11 +1754,8 @@ contains
         if (i /= j) then
           t(j,i,s) = t(j,i,s) - 0.5_dp * tmp1
         end if
-        !!t(i,j,s) = t(i,j,s) * rpa%frOcc(i,s) * rpa%frOcc(j,s)
-        !!t(j,i,s) = t(j,i,s) * rpa%frOcc(i,s) * rpa%frOcc(j,s)
         t(i,j,s) = t(i,j,s)
         t(j,i,s) = t(j,i,s)
-        !!woo(ij,s) = woo(ij,s) + (-grndEigVal(a,s) * tmp1 + tmp2) * rpa%frOcc(i,s) * rpa%frOcc(j,s)
         woo(ij,s) = woo(ij,s) + (-grndEigVal(a,s) * tmp1 + tmp2) 
       end do
 
@@ -1711,7 +1763,8 @@ contains
 
     ! xpyq = Q * xpy
     xpyq(:) = 0.0_dp
-    call transChrg%qMatVec(env, denseDesc, ovrXev, grndEigVecs, rpa%getIA, rpa%win, xpy, xpyq)
+    call transChrg%qMatVec(env, denseDesc, ovrXev, grndEigVecs, rpa%getIA, rpa%win,&
+     & xpy*rpa%sqrOccIA, xpyq)
 
     if (.not. tSpin) then  ! ---- spin-unpolarized case ----
       ! qgamxpyq(ab) = sum_jc K_ab,jc (X+Y)_jc
@@ -1731,7 +1784,8 @@ contains
     else  ! ---- spin-polarized case -----
 
       xpyqds(:) = 0.0_dp
-      call transChrg%qMatVecDs(env, denseDesc, ovrXev, grndEigVecs, rpa%getIA, rpa%win, xpy, xpyqds)
+      call transChrg%qMatVecDs(env, denseDesc, ovrXev, grndEigVecs, rpa%getIA, rpa%win,& 
+          & xpy*rpa%sqrOccIA, xpyqds)
 
       call hemv(gamxpyq, gammaMat,  xpyq)
       do s = 1, 2
@@ -1760,10 +1814,11 @@ contains
       do b = rpa%nocc_ud(s) + 1, a
         ab = rpa%iaTrans(a, b, s) - svv(s)
         ibs = rpa%iaTrans(i, b, s)
-        rhs(ias) = rhs(ias) - 2.0_dp * xpy(ibs) * qgamxpyq(ab, s)
+        frOcc = rpa%frOcc(a,s) * rpa%frOcc(b,s)
+        rhs(ias) = rhs(ias) - 2.0_dp * xpy(ibs) * frOcc * qgamxpyq(ab, s)
         ! Since qgamxpyq has only upper triangle
         if (a /= b) then
-          rhs(ibs) = rhs(ibs) - 2.0_dp * xpy(ias) * qgamxpyq(ab, s)
+          rhs(ibs) = rhs(ibs) - 2.0_dp * xpy(ias) * frOcc * qgamxpyq(ab, s)
         end if
       end do
     end do
@@ -1815,11 +1870,12 @@ contains
       do j = i, rpa%nocc_ud(s)
         jas = rpa%iaTrans(j, a, s)
         ij = rpa%iaTrans(i, j, s) - soo(s)
-        tmp1 = 2.0_dp * xpy(jas) * qgamxpyq(ij, s)
+        frOcc = rpa%frOcc(i,s) * rpa%frOcc(j,s)
+        tmp1 = 2.0_dp * xpy(jas) * frOcc * qgamxpyq(ij, s)
         rhs(ias) = rhs(ias) + tmp1
         wov(ias) = wov(ias) + tmp1
         if (i /= j) then
-          tmp2 = 2.0_dp * xpy(ias) * qgamxpyq(ij, s)
+          tmp2 = 2.0_dp * xpy(ias) * frOcc * qgamxpyq(ij, s)
           rhs(jas) = rhs(jas) + tmp2
           wov(jas) = wov(jas) + tmp2
         end if
@@ -1842,16 +1898,17 @@ contains
         i = rpa%getIJ(ij + soo(s), 1)
         j = rpa%getIJ(ij + soo(s), 2)
         qTr(:) = transChrg%qTransIJ(ij + soo(s), env, denseDesc, ovrXev, grndEigVecs, rpa%getIJ)
+        frOcc = rpa%frOcc(i,s) * rpa%frOcc(j,s)
         if (i == j) then
-          gamxpyq(:) = gamxpyq(:) + t(i,j,s) * qTr(:)
+          gamxpyq(:) = gamxpyq(:) + t(i,j,s) *  frOcc * qTr(:)
           if (tSpin) then
-            gamxpyqds(:) = gamxpyqds(:) + t(i,j,s) * qTr(:) * fact
+            gamxpyqds(:) = gamxpyqds(:) + t(i,j,s) *  frOcc * qTr(:) * fact
           end if
         else
           ! factor 2 because of symmetry of the matrix
-          gamxpyq(:) = gamxpyq(:) + 2.0_dp  * t(i,j,s) * qTr(:)
+          gamxpyq(:) = gamxpyq(:) + 2.0_dp  * t(i,j,s) *  frOcc * qTr(:)
           if (tSpin) then
-            gamxpyqds(:) = gamxpyqds(:) + 2.0_dp * t(i,j,s) * qTr(:) * fact
+            gamxpyqds(:) = gamxpyqds(:) + 2.0_dp * t(i,j,s) *  frOcc * qTr(:) * fact
           end if
         end if
       end do
@@ -1860,17 +1917,18 @@ contains
       do ab = 1, rpa%nxvv_ud(s)
         a = rpa%getAB(ab + svv(s), 1)
         b = rpa%getAB(ab + svv(s), 2)
+        frOcc = rpa%frOcc(a,s) * rpa%frOcc(b,s)
         qTr(:) = transChrg%qTransAB(ab + svv(s), env, denseDesc, ovrXev, grndEigVecs, rpa%getAB)
         if (a == b) then
-          gamxpyq(:) = gamxpyq(:) + t(a,b,s) * qTr(:)
+          gamxpyq(:) = gamxpyq(:) + t(a,b,s) * frOcc * qTr(:)
           if (tSpin) then
-            gamxpyqds(:) = gamxpyqds(:) + t(a,b,s) * qTr(:) * fact
+            gamxpyqds(:) = gamxpyqds(:) + t(a,b,s) * frOcc * qTr(:) * fact
           end if
         else
           ! factor 2 because of symmetry of the matrix
-          gamxpyq(:) = gamxpyq(:) + 2.0_dp * t(a,b,s) * qTr(:)
+          gamxpyq(:) = gamxpyq(:) + 2.0_dp * t(a,b,s) * frOcc * qTr(:)
           if (tSpin) then
-            gamxpyqds(:) = gamxpyqds(:) + 2.0_dp * t(a,b,s) * qTr(:) * fact
+            gamxpyqds(:) = gamxpyqds(:) + 2.0_dp * t(a,b,s) * frOcc * qTr(:) * fact
           end if
         end if
       end do
@@ -1899,12 +1957,15 @@ contains
         fact = -1.0_dp
       end if
       do ij = 1, rpa%nxoo_ud(s)
+        i = rpa%getIJ(ij + soo(s), 1)
+        j = rpa%getIJ(ij + soo(s), 2)
+        frOcc = rpa%frOcc(i,s) * rpa%frOcc(j,s)
         qTr(:) = transChrg%qTransIJ(ij + soo(s), env, denseDesc, ovrXev, grndEigVecs, rpa%getIJ)
         if (.not. tSpin) then
-          woo(ij,s) = woo(ij,s) + 4.0_dp * sum(qTr * gamqt)
+          woo(ij,s) = woo(ij,s) + 4.0_dp * frOcc * sum(qTr * gamqt)
         else
-          woo(ij,s) = woo(ij,s) + 2.0_dp * sum(qTr * gamqt)
-          woo(ij,s) = woo(ij,s) + 2.0_dp * fact * sum(qTr * gamxpyqds * lr%spinW(species0))
+          woo(ij,s) = woo(ij,s) + 2.0_dp * frOcc * sum(qTr * gamqt)
+          woo(ij,s) = woo(ij,s) + 2.0_dp * frOcc * fact * sum(qTr * gamxpyqds * lr%spinW(species0))
         end if
       end do
     end do
@@ -2028,7 +2089,7 @@ contains
     integer :: ia, kk, i, a, s, iis, aas
     real(dp), allocatable :: qTr(:), qTmp(:), P(:)
     real(dp) :: rhs2(size(rhs)), rkm1(size(rhs)), zkm1(size(rhs)), pkm1(size(rhs)), apk(size(rhs))
-    real(dp) :: rs, alphakm1, tmp1, tmp2, bkm1
+    real(dp) :: rs, alphakm1, tmp1, tmp2, bkm1, frOcc
 
     ! Need to change this for MPI, currently routine works on full RPA vectors
     iGlobal = 1
@@ -2061,14 +2122,18 @@ contains
         a = rpa%getIA(rpa%win(ia),2)
         s = rpa%getIA(rpa%win(ia),3)
         iis = rpa%iaTrans(i, i, s)
+        frOcc = rpa%frOcc(i,s)**2
         qTr(:) = transChrg%qTransIJ(iis, env, denseDesc, ovrXev, grndEigVecs, rpa%getIJ)
+        qTr(:) = frOcc * qTr
         call hemv(qTmp, lrGamma, qTr)
         aas = rpa%iaTrans(a, a, s)
+        frOcc = rpa%frOcc(a,s)**2
         qTr(:) = transChrg%qTransAB(aas, env, denseDesc, ovrXev, grndEigVecs, rpa%getAB)
+        qTr(:) = frOcc * qTr
         rs = rs - cExchange * dot_product(qTr, qTmp)
       end if
 
-      rs = rs * rpa%sqrOccIA(ia) + rpa%wij(ia)
+      rs = rs + rpa%wij(ia)
 
       P(ia) = 1.0_dp / rs
     end do
@@ -2084,7 +2149,7 @@ contains
     call actionAplusB(iGlobal, fGlobal, env, orb, lr, rpa, transChrg, 'S', denseDesc, species0,&
         & ovrXev, grndEigVecs, gammaMat, .true., rhs2, rkm1, lrGamma)
 
-    rkm1(:) = rhs / rpa%sqrOccIA - rkm1
+    rkm1(:) = rhs - rkm1
     zkm1(:) = P * rkm1
     pkm1(:) = zkm1
 
@@ -2125,7 +2190,7 @@ contains
 
     end do
 
-    rhs(:) = rhs2(:) * rpa%sqrOccIA(:)
+    rhs(:) = rhs2(:)
 
   end subroutine solveZVectorPrecond
 
@@ -2183,7 +2248,7 @@ contains
     integer :: nSpin, soo(2), svv(2)
     integer :: ij, ias, ijs, ab, i, j, a, b, s
     real(dp), allocatable :: qTr(:), gamxpyq(:), zq(:), zqds(:), vecHooZ(:)
-    real(dp) :: fact
+    real(dp) :: fact, frOcc
 
     nSpin = size(grndEigVal, dim=2)
 
@@ -2225,13 +2290,16 @@ contains
         fact = -1.0_dp
       end if
       do ij = 1, rpa%nxoo_ud(s)
+        i = rpa%getIJ(ij + soo(s), 1)
+        j = rpa%getIJ(ij + soo(s), 2)
         qTr(:) = transChrg%qTransIJ(ij + soo(s), env, denseDesc, ovrXev, grndEigVecs, rpa%getIJ)
+        frOcc = rpa%frOcc(i,s) * rpa%frOcc(j,s)
         ! W contains 1/2 for i == j.
         if (.not. lr%tSpin) then
-          woo(ij,s) = woo(ij,s) + 4.0_dp * sum(qTr * gamxpyq)
+          woo(ij,s) = woo(ij,s) + 4.0_dp * frOcc * sum(qTr * gamxpyq)
         else
-          woo(ij,s) = woo(ij,s) + 2.0_dp * sum(qTr * gamxpyq)
-          woo(ij,s) = woo(ij,s) + 2.0_dp * fact * sum(qTr * zqds * lr%spinW(species0))
+          woo(ij,s) = woo(ij,s) + 2.0_dp * frOcc * sum(qTr * gamxpyq)
+          woo(ij,s) = woo(ij,s) + 2.0_dp * fact * frOcc * sum(qTr * zqds * lr%spinW(species0))
         end if
       end do
     end do
@@ -3056,7 +3124,7 @@ contains
 
         ! calculate weight of single particle transitions
         !!wvec(:) = xpy(:,ii)**2 * rpa%frOccIA
-        wvec(:) = xpy(:,ii)**2
+        wvec(:) = (xpy(:,ii) * rpa%sqrOccIA)**2
         wvnorm = 1.0_dp / sqrt(sum(wvec**2))
         wvec(:) = wvec * wvnorm
 
@@ -3097,7 +3165,7 @@ contains
           end if
           write(fdXPlusY%unit, '(1x,i5,3x,a,3x,ES17.10)') ii, sign, sqrt(eval(ii))
           !!write(fdXPlusY%unit, '(6(1x,ES17.10))') xpy(:,ii) * rpa%frOccIA
-          write(fdXPlusY%unit, '(6(1x,ES17.10))') xpy(:,ii)
+          write(fdXPlusY%unit, '(6(1x,ES17.10))') xpy(:,ii) * rpa%sqrOccIA
         endif
 
         if (fdTrans%isConnected()) then
@@ -3298,6 +3366,7 @@ contains
     real(dp), intent(out) :: vecHvv(:)
 
     real(dp), allocatable :: qIJ(:), gqIJ(:), qX(:,:), Gq(:,:)
+    real(dp) :: frOcc
     integer :: i, a, b, s, ias, ibs, abs, nOrb
 
     nOrb = size(ovrXev, dim=1)
@@ -3316,8 +3385,9 @@ contains
       do b = rpa%nocc_ud(s) + 1, nOrb
         ibs = rpa%iaTrans(i, b, s)
         abs = rpa%iaTrans(a, b, s)
+        frOcc = rpa%frOcc(i,s) * rpa%frOcc(b,s)
         qIJ(:) = transChrg%qTransAB(abs, env, denseDesc, ovrXev, grndEigVecs, rpa%getAB)
-        qX(:,ias) = qX(:,ias) + qIJ * XorY(ibs)
+        qX(:,ias) = qX(:,ias) + qIJ * frOcc * XorY(ibs)
       end do
     end do
 
@@ -3333,10 +3403,11 @@ contains
       a = rpa%getAB(abs, 1)
       b = rpa%getAB(abs, 2)
       s = rpa%getAB(abs, 3)
+      frOcc = rpa%frOcc(a,s) * rpa%frOcc(b,s)
       do i = 1, rpa%nocc_ud(s)
         ias = rpa%iaTrans(i, a, s)
         ibs = rpa%iaTrans(i, b, s)
-        vecHvv(abs) = vecHvv(abs) - ipm * (dot_product(qX(:,ias), Gq(:,ibs))&
+        vecHvv(abs) = vecHvv(abs) - ipm * frOcc * (dot_product(qX(:,ias), Gq(:,ibs))&
             & + ipm * dot_product(Gq(:,ias), qX(:,ibs)))
       end do
     end do
@@ -3383,6 +3454,7 @@ contains
     real(dp), intent(out) :: vecHoo(:)
 
     real(dp), allocatable :: qIJ(:), gqIJ(:), qX(:,:), Gq(:,:)
+    real(dp) :: frOcc
     integer :: i, j, a, s, ias, jas, ijs, nOrb
 
     nOrb = size(ovrXev, dim=1)
@@ -3401,8 +3473,9 @@ contains
       do j = 1, rpa%nocc_ud(s)
         jas = rpa%iaTrans(j, a, s)
         ijs = rpa%iaTrans(i, j, s)
+        frOcc = rpa%frOcc(j,s) * rpa%frOcc(a,s)
         qIJ(:) = transChrg%qTransIJ(ijs, env, denseDesc, ovrXev, grndEigVecs, rpa%getIJ)
-        qX(:,ias) = qX(:,ias) + qIJ * XorY(jas)
+        qX(:,ias) = qX(:,ias) + qIJ * frOcc * XorY(jas)
       end do
     end do
 
@@ -3422,10 +3495,11 @@ contains
       i = rpa%getIJ(ijs, 1)
       j = rpa%getIJ(ijs, 2)
       s = rpa%getIJ(ijs, 3)
+      frOcc = rpa%frOcc(i,s) * rpa%frOcc(j,s)
       do a = rpa%nocc_ud(s) + 1, nOrb
         ias = rpa%iaTrans(i, a, s)
         jas = rpa%iaTrans(j, a, s)
-        vecHoo(ijs) = vecHoo(ijs) - ipm * (dot_product(qX(:,ias), Gq(:,jas))&
+        vecHoo(ijs) = vecHoo(ijs) - ipm * frOcc * (dot_product(qX(:,ias), Gq(:,jas))&
             & + ipm * dot_product(Gq(:,ias), qX(:,jas)))
       end do
     end do
@@ -3468,6 +3542,7 @@ contains
     real(dp), intent(out) :: vecHovT(:)
 
     real(dp), allocatable :: qIJ(:), gqIJ(:), qX(:,:), Gq(:,:)
+    real(dp) :: frOcc
     integer :: i, j, a, b, s, ias, ibs, abs, ijs, jas, nOrb, iMx
 
     nOrb = size(ovrXev, dim=1)
@@ -3486,8 +3561,9 @@ contains
       s = rpa%getIA(rpa%win(ias),3)
       do b = rpa%nocc_ud(s) + 1, nOrb
         ibs = rpa%iaTrans(i, b, s)
+        frOcc = rpa%frOcc(a,s) * rpa%frOcc(b,s)
         qIJ(:) = transChrg%qTransIA(ibs, env, denseDesc, ovrXev, grndEigVecs, rpa%getIA, rpa%win)
-        qX(:,ias) = qX(:,ias) + qIJ * t(a,b,s)
+        qX(:,ias) = qX(:,ias) + qIJ * frOcc * t(a,b,s)
       end do
     end do
 
@@ -3504,10 +3580,11 @@ contains
       i = rpa%getIA(rpa%win(ias),1)
       a = rpa%getIA(rpa%win(ias),2)
       s = rpa%getIA(rpa%win(ias),3)
+      frOcc = rpa%frOcc(i,s) * rpa%frOcc(a,s)
       do b = rpa%nocc_ud(s) + 1, nOrb
         ibs = rpa%iaTrans(i, b, s)
         abs = rpa%iaTrans(a, b, s)
-        vecHovT(ias) = vecHovT(ias) - 2.0_dp * dot_product(qX(:,ibs), Gq(:,abs))
+        vecHovT(ias) = vecHovT(ias) - 2.0_dp * frOcc * dot_product(qX(:,ibs), Gq(:,abs))
       end do
     end do
 
@@ -3519,8 +3596,9 @@ contains
       s = rpa%getIA(rpa%win(ias),3)
       do j = 1, rpa%nocc_ud(s)
         jas = rpa%iaTrans(j, a, s)
+        frOcc = rpa%frOcc(i,s) * rpa%frOcc(j,s)
         qIJ(:) = transChrg%qTransIA(jas, env, denseDesc, ovrXev, grndEigVecs, rpa%getIA, rpa%win)
-        qX(:,ias) = qX(:,ias) + qIJ * t(i,j,s)
+        qX(:,ias) = qX(:,ias) + qIJ * frOcc * t(i,j,s)
       end do
     end do
 
@@ -3539,10 +3617,11 @@ contains
       i = rpa%getIA(rpa%win(ias),1)
       a = rpa%getIA(rpa%win(ias),2)
       s = rpa%getIA(rpa%win(ias),3)
+      frOcc = rpa%frOcc(i,s) * rpa%frOcc(a,s)
       do j = 1, rpa%nocc_ud(s)
         jas = rpa%iaTrans(j, a, s)
         ijs = rpa%iaTrans(i, j, s)
-        vecHovT(ias) = vecHovT(ias) - 2.0_dp * dot_product(qX(:,jas), Gq(:,ijs))
+        vecHovT(ias) = vecHovT(ias) - 2.0_dp * frOcc * dot_product(qX(:,jas), Gq(:,ijs))
       end do
     end do
 
@@ -3584,6 +3663,7 @@ contains
     real(dp), intent(out) :: vecHooT(:)
 
     real(dp), allocatable :: qIJ(:), gqIJ(:), qX(:,:), Gq(:,:), qXa(:,:,:)
+    real(dp) :: frOcc
     integer :: nOrb, iSpin, nSpin, iMx, soo(2)
     integer :: i, j, k, a, b, s, ij, ias, ibs, ijs, jas, iks, jks
 
@@ -3605,8 +3685,9 @@ contains
       s = rpa%getIA(rpa%win(ias),3)
       do b = rpa%nocc_ud(s) + 1, nOrb
         ibs = rpa%iaTrans(i, b, s)
+        frOcc = rpa%frOcc(a,s) * rpa%frOcc(b,s)
         qIJ(:) = transChrg%qTransIA(ibs, env, denseDesc, ovrXev, grndEigVecs, rpa%getIA, rpa%win)
-        qX(:,ias) = qX(:,ias) + qIJ * t(a,b,s)
+        qX(:,ias) = qX(:,ias) + qIJ * frOcc * t(a,b,s)
       end do
     end do
 
@@ -3622,10 +3703,11 @@ contains
       i = rpa%getIJ(ijs, 1)
       j = rpa%getIJ(ijs, 2)
       s = rpa%getIJ(ijs, 3)
+      frOcc = rpa%frOcc(i,s) * rpa%frOcc(j,s)
       do a = rpa%nocc_ud(s) + 1, nOrb
         ias = rpa%iaTrans(i, a, s)
         jas = rpa%iaTrans(j, a, s)
-        vecHooT(ijs) = vecHooT(ijs) - 2.0_dp * dot_product(qX(:,ias), Gq(:,jas))
+        vecHooT(ijs) = vecHooT(ijs) - 2.0_dp * frOcc * dot_product(qX(:,ias), Gq(:,jas))
       end do
     end do
 
@@ -3649,7 +3731,8 @@ contains
           iks = rpa%iaTrans(i, k, iSpin)
           qIJ(:) = transChrg%qTransIJ(iks, env, denseDesc, ovrXev, grndEigVecs, rpa%getIJ)
           do j = 1, rpa%nocc_ud(iSpin)
-            qXa(:,i,j) = qXa(:,i,j) + qIJ * t(j,k,iSpin)
+            frOcc = rpa%frOcc(j,iSpin) * rpa%frOcc(k,iSpin)
+            qXa(:,i,j) = qXa(:,i,j) + qIJ * frOcc * t(j,k,iSpin)
           end do
         end do
       end do
@@ -3658,9 +3741,10 @@ contains
         i = rpa%getIJ(ij + soo(iSpin), 1)
         j = rpa%getIJ(ij + soo(iSpin), 2)
         ijs = rpa%iaTrans(i, j, iSpin)
+        frOcc = rpa%frOcc(i,iSpin) * rpa%frOcc(j,iSpin)
         do k = 1, rpa%nocc_ud(iSpin)
           jks = rpa%iaTrans(j, k, iSpin)
-          vecHooT(ijs) = vecHooT(ijs) - 2.0_dp * dot_product(qXa(:,i,k), Gq(:,jks))
+          vecHooT(ijs) = vecHooT(ijs) - 2.0_dp * frOcc * dot_product(qXa(:,i,k), Gq(:,jks))
         end do
       end do
       deallocate(qXa)
@@ -5031,8 +5115,8 @@ contains
     !> Output vector H[V] virtual-virtual
     real(dp), optional, intent(out) :: vecHvv(:)
 
-    integer :: nSpin, ab, s, abs, svv(2), ij, ijs, soo(2)
-    real(dp) :: fact
+    integer :: nSpin, ab, s, abs, svv(2), ij, ijs, soo(2), a, b, i, j
+    real(dp) :: fact, frOcc
     real(dp), allocatable  :: xpyq(:), gamxpyq(:), qTr(:), xpyqds(:), gamxpyqds(:)
 
     nSpin = size(grndEigVecs, dim=3)
@@ -5051,7 +5135,8 @@ contains
     end if
 
     xpyq(:) = 0.0_dp
-    call transChrg%qMatVec(env, denseDesc, ovrXev, grndEigVecs, rpa%getIA, rpa%win, XorY, xpyq)
+    call transChrg%qMatVec(env, denseDesc, ovrXev, grndEigVecs, rpa%getIA, rpa%win,&
+        &  XorY*rpa%sqrOccIA, xpyq)
 
     if (.not. lr%tSpin) then  ! ---- spin-unpolarized case ----
       ! vecHvv(ab) = sum_jc K_ab,jc (X+Y)_jc
@@ -5059,28 +5144,44 @@ contains
         call hemv(gamxpyq, frGamma, xpyq)
         if (present(vecHvv)) then
           do ab = 1, rpa%nxvv_ud(1)
+            a = rpa%getAB(ab, 1)
+            b = rpa%getAB(ab, 2)
+            s = rpa%getAB(ab, 3)
+            frOcc = rpa%frOcc(a,s) * rpa%frOcc(b,s)
             qTr(:) = transChrg%qTransAB(ab, env, denseDesc, ovrXev, grndEigVecs, rpa%getAB)
-            vecHvv(ab) = 2.0_dp * sum(qTr * gamxpyq)
+            vecHvv(ab) = 2.0_dp * frOcc * sum(qTr * gamxpyq)
           end do
         end if
         if (present(vecHoo)) then
           do ij = 1, rpa%nxoo_ud(1)
+            i = rpa%getIJ(ij, 1)
+            j = rpa%getIJ(ij, 2)
+            s = rpa%getIJ(ij, 3)
+            frOcc = rpa%frOcc(i,s) * rpa%frOcc(j,s)
             qTr(:) = transChrg%qTransIJ(ij, env, denseDesc, ovrXev, grndEigVecs, rpa%getIJ)
             ! vecHoo(ij) = sum_kb K_ij,kb (X+Y)_kb
-            vecHoo(ij) = 2.0_dp * sum(qTr * gamxpyq)
+            vecHoo(ij) = 2.0_dp * frOcc * sum(qTr * gamxpyq)
           end do
         end if
       else ! Triplet case
         if (present(vecHvv)) then
           do ab = 1, rpa%nxvv_ud(1)
+            a = rpa%getAB(ab, 1)
+            b = rpa%getAB(ab, 2)
+            s = rpa%getAB(ab, 3)
+            frOcc = rpa%frOcc(a,s) * rpa%frOcc(b,s)
             qTr(:) = transChrg%qTransAB(ab, env, denseDesc, ovrXev, grndEigVecs, rpa%getAB)
-            vecHvv(ab) = 2.0_dp * sum(qTr * xpyq * lr%spinW(species0))
+            vecHvv(ab) = 2.0_dp * frOcc * sum(qTr * xpyq * lr%spinW(species0))
           end do
         end if
         if (present(vecHoo)) then
           do ij = 1, rpa%nxoo_ud(1)
+            i = rpa%getIJ(ij, 1)
+            j = rpa%getIJ(ij, 2)
+            s = rpa%getIJ(ij, 3)
+            frOcc = rpa%frOcc(i,s) * rpa%frOcc(j,s)            
             qTr(:) = transChrg%qTransIJ(ij, env, denseDesc, ovrXev, grndEigVecs, rpa%getIJ)
-            vecHoo(ij) = 2.0_dp * sum(qTr * xpyq * lr%spinW(species0))
+            vecHoo(ij) = 2.0_dp * frOcc * sum(qTr * xpyq * lr%spinW(species0))
           end do
         end if
       end if
@@ -5090,8 +5191,8 @@ contains
       allocate(xpyqds(lr%nAtom))
       allocate(gamxpyqds(lr%nAtom))
       xpyqds(:) = 0.0_dp
-      call transChrg%qMatVecDs(env, denseDesc, ovrXev, grndEigVecs, rpa%getIA, rpa%win, XorY,&
-          & xpyqds)
+      call transChrg%qMatVecDs(env, denseDesc, ovrXev, grndEigVecs, rpa%getIA, rpa%win,&
+          & XorY*rpa%sqrOccIA, xpyqds)
 
       call hemv(gamxpyq, frGamma,  xpyq)
       do s = 1, 2
@@ -5103,19 +5204,25 @@ contains
         if (present(vecHvv)) then
           do ab = 1, rpa%nxvv_ud(s)
             abs = ab + svv(s)
+            a = rpa%getAB(ab, 1)
+            b = rpa%getAB(ab, 2)
+            frOcc = rpa%frOcc(a,s) * rpa%frOcc(b,s)            
             qTr(:) = transChrg%qTransAB(abs, env, denseDesc, ovrXev, grndEigVecs, rpa%getAB)
-            vecHvv(abs) = sum(qTr * gamxpyq)
+            vecHvv(abs) = frOcc * sum(qTr * gamxpyq)
             ! Magnetization part
-            vecHvv(abs) = vecHvv(abs) + fact * sum(qTr * xpyqds * lr%spinW(species0))
+            vecHvv(abs) = vecHvv(abs) + fact * frOcc * sum(qTr * xpyqds * lr%spinW(species0))
           end do
         end if
         if (present(vecHoo)) then
           do ij = 1, rpa%nxoo_ud(s)
             ijs = ij + soo(s)
+            i = rpa%getIJ(ij, 1)
+            j = rpa%getIJ(ij, 2)
+            frOcc = rpa%frOcc(i,s) * rpa%frOcc(j,s)  
             qTr(:) = transChrg%qTransIJ(ijs, env, denseDesc, ovrXev, grndEigVecs, rpa%getIJ)
-            vecHoo(ijs) = sum(qTr * gamxpyq)
+            vecHoo(ijs) = frOcc * sum(qTr * gamxpyq)
             !magnetization part
-            vecHoo(ijs) = vecHoo(ijs) + fact * sum(qTr * xpyqds * lr%spinW(species0))
+            vecHoo(ijs) = vecHoo(ijs) + fact * frOcc * sum(qTr * xpyqds * lr%spinW(species0))
           end do
         end if
       end do
@@ -5175,6 +5282,7 @@ contains
     real(dp), dimension(2) :: spinFactor = [1.0_dp, -1.0_dp]
     real(dp), allocatable  :: xpyq(:), gamxpyq(:), qTr(:), xpyqds(:), gamxpyqds(:)
     real(dp), allocatable  :: gamqt(:)
+    real(dp) :: frOcc
 
     if (iMode == 1) then
       @:ASSERT(size(vecH) == sum(rpa%nxoo_ud))
@@ -5207,16 +5315,18 @@ contains
       do ij = 1, rpa%nxoo_ud(s)
         i = rpa%getIJ(ij + soo(s), 1)
         j = rpa%getIJ(ij + soo(s), 2)
+        frOcc = rpa%frOcc(i,s) * rpa%frOcc(j,s)
         qTr(:) = transChrg%qTransIJ(ij + soo(s), env, denseDesc, ovrXev, grndEigVecs, rpa%getIJ)
         if (i == j) then
-          gamxpyq(:) = gamxpyq(:) + matM(i,j,s) * qTr(:)
+          gamxpyq(:) = gamxpyq(:) + frOcc * matM(i,j,s) * qTr(:)
           if (lr%tSpin) then
-            gamxpyqds(:) = gamxpyqds(:) + matM(i,j,s) * qTr(:) * spinFactor(s)
+            gamxpyqds(:) = gamxpyqds(:) + frOcc * matM(i,j,s) * qTr(:) * spinFactor(s)
           end if
         else
-          gamxpyq(:) = gamxpyq(:) + (matM(i,j,s) + matM(j,i,s)) * qTr(:)
+          gamxpyq(:) = gamxpyq(:) + frOcc * (matM(i,j,s) + matM(j,i,s)) * qTr(:)
           if (lr%tSpin) then
-            gamxpyqds(:) = gamxpyqds(:) + (matM(i,j,s) + matM(j,i,s)) * qTr(:) * spinFactor(s)
+            gamxpyqds(:) = gamxpyqds(:) + frOcc * (matM(i,j,s) + matM(j,i,s)) * qTr(:) * &
+                & spinFactor(s)
           end if
         end if
       end do
@@ -5225,17 +5335,19 @@ contains
       do ab = 1, rpa%nxvv_ud(s)
         a = rpa%getAB(ab + svv(s), 1)
         b = rpa%getAB(ab + svv(s), 2)
+        frOcc = rpa%frOcc(a,s) * rpa%frOcc(b,s)
         qTr(:) = transChrg%qTransAB(ab + svv(s), env, denseDesc, ovrXev, grndEigVecs, rpa%getAB)
         if (a == b) then
-          gamxpyq(:) = gamxpyq(:) + matM(a,b,s) * qTr(:)
+          gamxpyq(:) = gamxpyq(:) + frOcc * matM(a,b,s) * qTr(:)
           if (lr%tSpin) then
-            gamxpyqds(:) = gamxpyqds(:) + matM(a,b,s) * qTr(:) * spinFactor(s)
+            gamxpyqds(:) = gamxpyqds(:) + frOcc * matM(a,b,s) * qTr(:) * spinFactor(s)
           end if
         else
           ! Factor 2 because of symmetry of the matrix
-          gamxpyq(:) = gamxpyq(:) + (matM(a,b,s) + matM(b,a,s)) * qTr(:)
+          gamxpyq(:) = gamxpyq(:) + frOcc * (matM(a,b,s) + matM(b,a,s)) * qTr(:)
           if (lr%tSpin) then
-            gamxpyqds(:) = gamxpyqds(:) + (matM(a,b,s) + matM(b,a,s)) * qTr(:) * spinFactor(s)
+            gamxpyqds(:) = gamxpyqds(:) + frOcc * (matM(a,b,s) + matM(b,a,s)) * qTr(:) *& 
+            & spinFactor(s)
           end if
         end if
       end do
@@ -5247,10 +5359,11 @@ contains
       i = rpa%getIA(ias, 1)
       a = rpa%getIA(ias, 2)
       s = rpa%getIA(ias, 3)
+      frOcc = rpa%frOcc(i,s) * rpa%frOcc(a,s)
       qTr(:) = transChrg%qTransIA(ias, env, denseDesc, ovrXev, grndEigVecs, rpa%getIA, rpa%win)
-      gamxpyq(:) = gamxpyq(:) + (matM(i,a,s) + matM(a,i,s)) * qTr(:)
+      gamxpyq(:) = gamxpyq(:) + frOcc * (matM(i,a,s) + matM(a,i,s)) * qTr(:)
       if (lr%tSpin) then
-         gamxpyqds(:) = gamxpyqds(:) + (matM(i,a,s) + matM(a,i,s)) * qTr(:) * spinFactor(s)
+         gamxpyqds(:) = gamxpyqds(:) + frOcc * (matM(i,a,s) + matM(a,i,s)) * qTr(:) * spinFactor(s)
       end if
     end do
 
@@ -5262,13 +5375,14 @@ contains
         do ij = 1, rpa%nxoo_ud(s)
           i = rpa%getIJ(ij + soo(s), 1)
           j = rpa%getIJ(ij + soo(s), 2)
+          frOcc = rpa%frOcc(i,s) * rpa%frOcc(j,s)
           qTr(:) = transChrg%qTransIJ(ij + soo(s), env, denseDesc, ovrXev, grndEigVecs, rpa%getIJ)
           if (.not. lr%tSpin) then
-            vecH(ij + soo(s)) = 4.0_dp * dot_product(gamqt,qTr)
+            vecH(ij + soo(s)) = 4.0_dp * frOcc * dot_product(gamqt,qTr)
           else
-            vecH(ij + soo(s)) = 2.0_dp * dot_product(gamqt,qTr)
+            vecH(ij + soo(s)) = 2.0_dp * frOcc * dot_product(gamqt,qTr)
             vecH(ij + soo(s)) = vecH(ij + soo(s)) +&
-                & spinFactor(s) * dot_product(gamxpyqds * lr%spinW(species0), qTr)
+                & spinFactor(s) * frOcc * dot_product(gamxpyqds * lr%spinW(species0), qTr)
           end if
         end do
       end do
@@ -5277,13 +5391,14 @@ contains
         do ab = 1, rpa%nxvv_ud(s)
           a = rpa%getAB(ab + svv(s), 1)
           b = rpa%getAB(ab + svv(s), 2)
+          frOcc = rpa%frOcc(a,s) * rpa%frOcc(b,s)
           qTr(:) = transChrg%qTransAB(ab + svv(s), env, denseDesc, ovrXev, grndEigVecs, rpa%getAB)
           if (.not. lr%tSpin) then
-            vecH(ab + svv(s)) = 4.0_dp * dot_product(gamqt,qTr)
+            vecH(ab + svv(s)) = 4.0_dp * frOcc * dot_product(gamqt,qTr)
           else
-            vecH(ab + svv(s)) = 2.0_dp * dot_product(gamqt,qTr)
+            vecH(ab + svv(s)) = 2.0_dp * frOcc * dot_product(gamqt,qTr)
             vecH(ab + svv(s)) = vecH(ab + svv(s)) +&
-                & spinFactor(s) * dot_product(gamxpyqds * lr%spinW(species0), qTr)
+                & spinFactor(s) * frOcc * dot_product(gamxpyqds * lr%spinW(species0), qTr)
           end if
         end do
       end do
@@ -5292,13 +5407,14 @@ contains
         i = rpa%getIA(ias, 1)
         a = rpa%getIA(ias, 2)
         s = rpa%getIA(ias, 3)
+        frOcc = rpa%frOcc(i,s) * rpa%frOcc(a,s)
         qTr(:) = transChrg%qTransIA(ias, env, denseDesc, ovrXev, grndEigVecs, rpa%getIA, rpa%win)
         if (.not. lr%tSpin) then
-           vecH(ias) = 4.0_dp * dot_product(gamqt,qTr)
+           vecH(ias) = 4.0_dp * frOcc * dot_product(gamqt,qTr)
         else
-          vecH(ias) =  2.0_dp * dot_product(gamqt,qTr)
+          vecH(ias) =  2.0_dp * frOcc * dot_product(gamqt,qTr)
           vecH(ias) = vecH(ias) +&
-              & spinFactor(s) * dot_product(gamxpyqds * lr%spinW(species0), qTr)
+              & spinFactor(s) * frOcc * dot_product(gamxpyqds * lr%spinW(species0), qTr)
         end if
       end do
     end if
@@ -5482,7 +5598,7 @@ contains
     do ia = 1, rpa%nxov_rd
       qia(:) = transChrg%qTransIA(ia, env, denseDesc, ovrXev, grndEigVecs, rpa%getIA, rpa%win)
       !!atomicTransQ(:) = atomicTransQ + preFactor * qia * rpa%frOccIA(ia) * xpy(ia,lr%nstat)
-      atomicTransQ(:) = atomicTransQ + preFactor * qia * xpy(ia,lr%nstat)
+      atomicTransQ(:) = atomicTransQ + preFactor * qia * xpy(ia,lr%nstat) * rpa%sqrOccIA(ia)
     end do
 
     call openfile(fdTransQ, transChrgOut, mode="w")
@@ -5504,13 +5620,13 @@ contains
 
   end subroutine getAndWriteTransitionCharges
 
-  subroutine naturalOccAndEntropy(rpa, filling, t, xpy, xmy, tempElec, TS)
+  subroutine naturalOccAndEntropy(rpa, occ, t, xpy, xmy, tempElec, TS)
     
     !> Run time parameters of the Casida routine 
     type(TCasidaParameter), intent(in) :: rpa
 
     !> Ground state occupations
-    real(dp), intent(in) :: filling(:,:)
+    real(dp), intent(in) :: occ(:,:)
 
     !> 1-RDDM
     real(dp), intent(in) :: t(:,:,:)
@@ -5524,19 +5640,19 @@ contains
     real(dp), intent(out) :: TS
 
     real(dp), allocatable :: excOcc(:,:), mat(:,:)
-    real(dp) :: hocc
+    real(dp) :: hOcc, wi, wj, trace
 
-    integer :: iSpin, nSpin, iOrb, nOrb, i, info, ias, a, s
+    integer :: iSpin, nSpin, iOrb, jOrb, nOrb, mOrb, i, info, ias, a, s
     logical :: tNakai = .false.
     !logical :: tNakai = .true.
 
-    nOrb = size(filling, dim=1)
-    nSpin = size(filling, dim=2)
+    nOrb = size(occ, dim=1)
+    nSpin = size(occ, dim=2)
     
     allocate(excOcc(nOrb,nSpin))
     allocate(mat(nOrb,nOrb))
 
-    if (filling(rpa%nocc_ud(1)+1,1)/2.0_dp > 1.d-7) then
+    if (occ(rpa%nocc_ud(1)+1,1)/2.0_dp > 1.d-7) then
       print *
       print *,'PERFORM NUMERICAL FORCES'
       print *
@@ -5545,7 +5661,7 @@ contains
     if (tNakai) then
       do iSpin = 1, nSpin
         do iOrb = 1, nOrb
-          excOcc(iOrb,iSpin) =  (nSpin/2.0_dp) * filling(iOrb,iSpin)
+          excOcc(iOrb,iSpin) =  (nSpin/2.0_dp) * occ(iOrb,iSpin)
         end do
       enddo
       do ias = 1, rpa%nxov_rd
@@ -5553,35 +5669,22 @@ contains
         a = rpa%getIA(rpa%win(ias),2)
         s = rpa%getIA(rpa%win(ias),3)
         excOcc(i, s) = excOcc(i, s) - 0.5_dp * xpy(ias) * xmy(ias)
-        excOcc(a, s) = excOcc(a, s) + 0.5_dp * xpy(ias) * xmy(ias) 
+        excOcc(a, s) = excOcc(a, s) + 0.5_dp * xpy(ias) * xmy(ias)
       end do
     else
       mat(:,:) = 0.0_dp
       do iSpin = 1, nSpin
         do iOrb = 1, nOrb
-          mat(iOrb,iOrb) =  (nSpin/2.0_dp) * filling(iOrb,iSpin)
+          mat(iOrb,iOrb) =  (nSpin/2.0_dp) * occ(iOrb,iSpin)
+!!          excOcc(iOrb,iSpin) = mat(iOrb,iOrb) + (nSpin/2.0_dp) * t(iOrb,iOrb, iSpin)
         enddo
-        mat(:,:) = mat(:,:) +  (nSpin/2.0_dp) * t(:,:,iSpin)
-        call heev(mat, excOcc(:,iSpin), 'U', 'N', info)
+        mat(:,:) = mat(:,:) +  (nSpin/2.0_dp) * t(:,:, iSpin)
+        call heev(mat, excOcc(:,iSpin), 'U', 'N', info)       
       enddo
-    !   do i = 1, size(mat,dim=1)
-    !     print *,'GooStuff', i,  0.5*t(i,i,1)
-    !   enddo
-    ! excOcc = 0.0_dp
-    ! mat(:,:) = 0.0_dp
-    ! do iSpin = 1, nSpin
-    !   mat(:,:) = 0.5*t(:,:,iSpin)
-    !   call heev(mat, excOcc(:,iSpin), 'U', 'N', info)
-    !   ! do iOrb = 1, nOrb
-    !   !   excOcc(iOrb,iSpin) =  excOcc(iOrb,iSpin) - (nSpin/2.0_dp) * filling(iOrb,iSpin)
-    !   ! enddo    
-      
-    ! enddo
-    
     end if
   
-    do i = 1, size(filling, dim=1)
-      write(13,'(2x,i3,2x,f10.8,2x,f10.8)') i,(nSpin/2.0_dp)*filling(i,1),excOcc(i,1)
+    do i = 1, size(occ, dim=1)
+      write(13,'(2x,i3,2x,f10.8,2x,f10.8)') i,(nSpin/2.0_dp)*occ(i,1),excOcc(i,1)
     enddo
 
     TS = 0.0_dp
