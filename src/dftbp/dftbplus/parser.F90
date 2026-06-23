@@ -8160,6 +8160,55 @@ contains
       call convertUnitHsd(char(modifier), timeUnits, child3, thermostatInp%langevin%gamma)
       thermostatInp%langevin%gamma = 1.0_dp / thermostatInp%langevin%gamma
 
+      ! Check for regional thermostat configuration
+      call getChild(thermNode, "RegionalThermostat", child=child2, requested=.false.)
+      if (associated(child2)) then
+        thermostatInp%langevin%tRegioTherm = .true.
+        allocate(thermostatInp%langevin%regionTemperature(2))
+        allocate(thermostatInp%langevin%regionStart(2))
+        allocate(thermostatInp%langevin%regionEnd(2))
+        
+        ! Read region 1 configuration
+        call getChild(child2, "Region1", child=child3, requested=.false.)
+        if (.not. associated(child3)) then
+          call detailedError(child2, "Regional thermostat enabled but region data not provided in HSD file&
+              & (Region1 is missing)")
+        end if
+        call getChildValue(child3, "Temperature", thermostatInp%langevin%regionTemperature(1),&
+            & modifier=modifier, child=child)
+        call convertUnitHsd(char(modifier), tempUnits, child, thermostatInp%langevin%regionTemperature(1))
+        call getChildValue(child3, "StartAtom", thermostatInp%langevin%regionStart(1), child=child)
+        call getChildValue(child3, "EndAtom", thermostatInp%langevin%regionEnd(1), child=child)
+        
+        ! Read region 2 configuration
+        call getChild(child2, "Region2", child=child3, requested=.false.)
+        if (.not. associated(child3)) then
+          call detailedError(child2, "Regional thermostat enabled but region data not provided in HSD file&
+              & (Region2 is missing)")
+        end if
+        call getChildValue(child3, "Temperature", thermostatInp%langevin%regionTemperature(2),&
+            & modifier=modifier, child=child)
+        call convertUnitHsd(char(modifier), tempUnits, child, thermostatInp%langevin%regionTemperature(2))
+        call getChildValue(child3, "StartAtom", thermostatInp%langevin%regionStart(2), child=child)
+        call getChildValue(child3, "EndAtom", thermostatInp%langevin%regionEnd(2), child=child)
+        
+        ! Validate region boundaries
+        if (thermostatInp%langevin%regionStart(1) < 1 .or. thermostatInp%langevin%regionStart(2) < 1) then
+          call detailedError(child2, "Region start atoms must be >= 1")
+        end if
+        if (thermostatInp%langevin%regionStart(1) > thermostatInp%langevin%regionEnd(1)) then
+          call detailedError(child2, "Region1: StartAtom > EndAtom")
+        end if
+        if (thermostatInp%langevin%regionStart(2) > thermostatInp%langevin%regionEnd(2)) then
+          call detailedError(child2, "Region2: StartAtom > EndAtom")
+        end if
+        ! Check for region overlap
+        if (.not. (thermostatInp%langevin%regionEnd(1) < thermostatInp%langevin%regionStart(2) &
+            & .or. thermostatInp%langevin%regionEnd(2) < thermostatInp%langevin%regionStart(1))) then
+          call detailedError(child2, "Thermostat regions 1 and 2 overlap in regional thermostat configuration")
+        end if
+      end if
+
     case ("nosehoover")
 
       thermostatInp%thermostatType = thermostatTypes%nhc
