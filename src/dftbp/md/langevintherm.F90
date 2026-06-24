@@ -139,6 +139,7 @@ contains
       end if
       
       do iReg = 1, 2
+        print *,'reg temp',  input%regionTemperature(iReg)
         this%regKT(iReg) = input%regionTemperature(iReg)
         this%startReg(iReg) = input%regionStart(iReg)
         this%endReg(iReg) = input%regionEnd(iReg)

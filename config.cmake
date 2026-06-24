@@ -7,9 +7,9 @@
 # automatically default to RelWithDebInfo if used in a single configuration build. Uncomment or
 # override it only if you want a non-default single configuration build.
 
-option(WITH_OMP "Whether OpenMP thread parallisation should be enabled" TRUE)
+option(WITH_OMP "Whether OpenMP thread parallisation should be enabled" FALSE)
 
-option(WITH_MPI "Whether DFTB+ should support MPI-parallelism" FALSE)
+option(WITH_MPI "Whether DFTB+ should support MPI-parallelism" TRUE)
 # If you build an MPI-parallised binary, consider to set WITH_OMP (OpenMP thread parallelisaton) to
 # FALSE unless you want hybrid parallelisation (for experts only).
 
