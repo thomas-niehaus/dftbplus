@@ -108,10 +108,7 @@ contains
     !> MD time step
     real(dp), intent(in) :: deltaT
 
-    integer :: unit, iStat, iReg, iAt
-    real(dp) :: tempK
-    ! Boltzmann constant in atomic units: approx 3.166811e-6 Hartree/K
-    real(dp), parameter :: KB_AU = 3.16681153d-6
+    integer :: iReg
 
     call move_alloc(pRanlux, this%pRanlux)
     this%nAtom = size(masses)
@@ -213,7 +210,8 @@ contains
           v_sq_old = sum(velocities(:, ii)**2)
           
           velocities(:, ii) = velocities(:, ii) * (1.0_dp - this%gamma * this%deltaT)
-          xi = sqrt(2.0_dp * this%mass(ii) * this%gamma * this%regKT(iReg) * this%deltaT) / this%mass(ii)
+          xi = sqrt(2.0_dp * this%mass(ii) * this%gamma * this%regKT(iReg) * this%deltaT)&
+              & / this%mass(ii)
           velocities(:, ii) = velocities(:, ii) + xi * gaussian((ii-1)*3+1:ii*3)
           
           v_sq_new = sum(velocities(:, ii)**2)
