@@ -110,6 +110,7 @@ module dftbp_dftbplus_initprogram
   use dftbp_mixer_factory, only : TMixerFactoryCmplx, TMixerFactoryReal
   use dftbp_mixer_mixer, only : TMixerCmplx, TMixerReal
   use dftbp_reks_reks, only : REKS_init, reksTypes, TReksCalc, TReksInp
+  use dftbp_roks_roks, only : TRoksCalc
   use dftbp_solvation_cm5, only : TChargeModel5, TChargeModel5_init
   use dftbp_solvation_fieldscaling, only : init_TScaleExtEField, TScaleExtEField
   use dftbp_solvation_solvation, only : TSolvation
@@ -1163,6 +1164,9 @@ module dftbp_dftbplus_initprogram
     !> Data type for REKS
     type(TReksCalc), allocatable :: reks
 
+    !> Data type for ROKS
+    type(TRoksCalc), allocatable :: roks
+
     !> Atomic charge contribution in excited state
     real(dp), allocatable :: dQAtomEx(:)
 
@@ -1347,10 +1351,6 @@ contains
 
     @:ASSERT(input%tInitialized)
 
-    if (input%ctrl%roksInp%enabled) then
-      call error("ROKS input is recognized, but ROKS execution is not yet implemented")
-    end if
-
     write(stdOut, "(/, A)") "Starting initialization..."
     write(stdOut, "(A80)") repeat("-", 80)
 
@@ -1375,6 +1375,38 @@ contains
       ! some variables such as this%qOutput should be treated in a restricted scheme. Here nSpin is
       ! set to one and changes to two later in the initialization.
       allocate(this%reks)
+
+    else if (input%ctrl%roksInp%enabled) then
+      ! ROKS builds separate alpha and beta Hamiltonians, although the final
+      ! effective ROKS Hamiltonian will be diagonalized only once.
+
+      if (.not. input%ctrl%tSCC) then
+        call error("ROKS requires SCC = Yes")
+      end if
+
+      if (.not. input%ctrl%tSpin) then
+        call error("ROKS requires collinear spin polarization")
+      end if
+
+      if (input%ctrl%t2Component) then
+        call error("ROKS does not support noncollinear spin polarization")
+      end if
+
+      if (input%ctrl%nrSpinPol <= 0.0_dp) then
+        call error("ROKS requires a positive number of unpaired electrons")
+      end if
+
+      if (abs(input%ctrl%nrSpinPol - nint(input%ctrl%nrSpinPol)) > elecTolMax) then
+        call error("ROKS requires an integer number of unpaired electrons")
+      end if
+
+      if (input%ctrl%tSpinOrbit) then
+        call error("ROKS does not support spin-orbit coupling")
+      end if
+      
+      allocate(this%roks)
+      this%nSpin = 2
+
     else if (this%tSpin) then
       ! unrestricted spin polarisation
       this%nSpin = 2
@@ -1740,9 +1772,18 @@ contains
     this%nrSpinPol = input%ctrl%nrSpinPol
     call initElectronNumber(this%q0, this%nrChrg, this%nrSpinPol, this%nSpin, this%orb,&
         & this%nEl0, this%nEl)
+
+    if (allocated(this%roks)) then
+      call this%roks%init(this%nEl, this%orb%nOrb)
+
+      write(stdOut, "(A,I0)") "ROKS core orbitals:       ", this%roks%Nc
+      write(stdOut, "(A,I0)") "ROKS open-shell orbitals: ", this%roks%No
+      write(stdOut, "(A,I0)") "ROKS virtual orbitals:    ", this%roks%Nv
+
+    end if
+
     call initElectronFilling_(input, this%nSpin, this%Ef, this%iDistribFn, this%tempElec,&
         & this%tFixEf, this%tSetFillingTemp, this%tFillKSep)
-
     call ensureSolverCompatibility(input%ctrl%solver%iSolver, this%kPoint, input%ctrl%parallelOpts,&
         & this%nIndepSpin, this%tempElec, input%ctrl%isASICallbackEnabled)
     nBufferedCholesky = countBufferedCholesky_(this%tRealHS, this%parallelKS%nLocalKS)
@@ -3068,6 +3109,26 @@ contains
       call this%initOutputFiles(env)
     end if
 
+    if (allocated(this%roks)) then
+
+      if (.not. this%tRealHS) then
+        call error("ROKS currently requires a real Hamiltonian")
+      end if
+
+      if (this%nKPoint /= 1) then
+        call error("ROKS currently supports only the Gamma point")
+      end if
+
+      if (any(abs(this%kPoint(:,1)) > tolSameDist)) then
+        call error("ROKS currently supports only the Gamma point")
+      end if
+
+      if (this%tHelical) then
+        call error("ROKS currently does not support helical structures")
+      end if
+
+    end if
+    
     if (allocated(this%reks)) then
       call checkReksConsistency(input%ctrl%reksInp, this%solvation, this%onSiteElements,&
           & this%kPoint, this%nEl, this%nKPoint, this%tSccCalc, this%tSpin, this%tSpinOrbit,&
@@ -3083,6 +3144,15 @@ contains
 
     call this%initDetArrays(nLocalRows, nLocalCols)
     call this%initArrays(env, input)
+
+    if (allocated(this%roks)) then
+      call this%roks%allocateMatrices(nLocalRows, nLocalCols)
+
+      write(stdOut, "(A,I0,A,I0)") "ROKS matrix dimensions: ", &
+          & nLocalRows, " x ", nLocalCols
+
+      call error("ROKS Hamiltonian storage allocated; construction is not implemented")
+    end if
 
   #:if WITH_TRANSPORT
     if (this%tUpload) then
