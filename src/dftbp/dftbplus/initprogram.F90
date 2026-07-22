@@ -1346,6 +1346,11 @@ contains
   #:endif
 
     @:ASSERT(input%tInitialized)
+
+    if (input%ctrl%roksInp%enabled) then
+      call error("ROKS input is recognized, but ROKS execution is not yet implemented")
+    end if
+
     write(stdOut, "(/, A)") "Starting initialization..."
     write(stdOut, "(A80)") repeat("-", 80)
 

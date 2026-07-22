@@ -54,7 +54,7 @@ module dftbp_dftbplus_inputdata
   implicit none
 
   private
-  public :: TControl, TSlater, TInputData, TParallelOpts
+  public :: TControl, TSlater, TInputData, TParallelOpts, TRoksInp
   public :: TBlacsOpts
   public :: THybridXcInp
   public :: init, destruct
@@ -141,6 +141,15 @@ module dftbp_dftbplus_inputdata
     real(dp), allocatable :: gammaCutoff
 
   end type THybridXcInp
+
+
+  !> Input settings for restricted open-shell Kohn-Sham calculations
+  type :: TRoksInp
+
+    !> Whether a ROKS calculation is requested
+    logical :: enabled = .false.
+
+  end type TRoksInp
 
 
   !> Main control data for program as extracted by the parser
@@ -571,6 +580,9 @@ module dftbp_dftbplus_inputdata
 
     !> REKS input
     type(TReksInp) :: reksInp
+
+    !> ROKS input
+    type(TRoksInp) :: roksInp
 
     !> Whether Scc should be updated with the output charges (obtained after diagonalization)
     !! Could be set to .false. to prevent costly recalculations (e.g. when using Poisson-solver)

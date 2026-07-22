@@ -153,7 +153,7 @@ contains
 
     type(TStatus) :: errStatus
     type(TOrbitals) :: orb
-    type(fnode), pointer :: root, tmp, driverNode, hamNode, analysisNode, child, dummy
+    type(fnode), pointer :: root, tmp, driverNode, hamNode, analysisNode, child, dummy, roksNode
     logical :: tReadAnalysis
     integer, allocatable :: implicitParserVersion
 
@@ -177,6 +177,14 @@ contains
     ! Hamiltonian settings that need to know settings from the REKS block
     call getChildValue(root, "Reks", dummy, "None", child=child)
     call readReks(child, dummy, input%ctrl, input%geom)
+
+    ! Restricted open-shell Kohn-Sham settings
+    call getChildValue(root, "Roks", dummy, "None", child=roksNode)
+    call readRoks(roksNode, dummy, input%ctrl)
+    if (input%ctrl%roksInp%enabled .and.&
+        & input%ctrl%reksInp%reksAlg /= reksTypes%noReks) then
+      call detailedError(roksNode, "ROKS and REKS cannot be used simultaneously")
+    end if
 
     call getChild(root, "Transport", child, requested=.false.)
 
@@ -8113,6 +8121,35 @@ contains
     end if
 
   end subroutine parseHybridBlock
+
+
+  !> Reads the ROKS block
+  subroutine readRoks(node, value, ctrl)
+
+    !> ROKS node in the input tree
+    type(fnode), pointer, intent(in) :: node
+
+    !> Polymorphic ROKS value
+    type(fnode), pointer, intent(in) :: value
+
+    !> Control structure to fill
+    type(TControl), intent(inout) :: ctrl
+
+    type(string) :: buffer
+
+    call getNodeName(value, buffer)
+
+    select case (char(buffer))
+    case ("none")
+      ctrl%roksInp%enabled = .false.
+    case ("simple")
+      ctrl%roksInp%enabled = .true.
+    case default
+      call getNodeHSDName(value, buffer)
+      call detailedError(node, "Invalid ROKS algorithm '" // char(buffer) // "'")
+    end select
+
+  end subroutine readRoks
 
 
   !> Reads the REKS block
