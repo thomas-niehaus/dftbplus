@@ -108,6 +108,7 @@ module dftbp_dftbplus_main
       & getreksgradproperties, getReksStress, getstateinteraction, guessneweigvecs, optimizeFONs,&
       & printreksmicrostates, printrekssainfo, printsareksenergy, qm2udl, qmexpandl, TReksCalc,&
       & ud2qml
+  use dftbp_roks_roks, only : TRoksCalc
   use dftbp_solvation_cm5, only : TChargeModel5
   use dftbp_solvation_fieldscaling, only : TScaleExtEField
   use dftbp_solvation_solvation, only : TSolvation
@@ -1487,11 +1488,11 @@ contains
               & this%tSpinSharedEf, this%tSpinOrbit, this%tDualSpinOrbit, this%tFillKSep,&
               & this%tFixEf, this%tMulliken, this%iDistribFn, this%tempElec, this%nEl,&
               & this%parallelKS, this%Ef, this%mu, this%dftbEnergy(this%deltaDftb%iDeterminant),&
-              & this%hybridXc, this%eigen, this%filling, this%rhoPrim, this%xi, this%orbitalL,&
-              & this%HSqrReal, this%SSqrReal, this%eigvecsReal, this%iRhoPrim, this%HSqrCplx,&
-              & this%SSqrCplx, this%eigvecsCplx, this%rhoSqrReal, this%densityMatrix,&
-              & this%nNeighbourCam, this%nNeighbourCamSym, this%deltaDftb, this%apiCallBack,&
-              & this%dangerousChanges, errStatus)
+              & this%hybridXc, this%roks, this%eigen, this%filling, this%rhoPrim, this%xi,&
+              & this%orbitalL, this%HSqrReal, this%SSqrReal, this%eigvecsReal, this%iRhoPrim,&
+              & this%HSqrCplx, this%SSqrCplx, this%eigvecsCplx, this%rhoSqrReal,&
+              & this%densityMatrix, this%nNeighbourCam, this%nNeighbourCamSym, this%deltaDftb,&
+              & this%apiCallBack, this%dangerousChanges, errStatus)
           if (errStatus%hasError()) call error(errStatus%message)
 
           if (this%tWriteBandDat) then
@@ -2792,10 +2793,10 @@ contains
       & nNeighbourSK, iSparseStart, img2CentCell, iCellVec, cellVec, kPoint, kWeight, orb,&
       & tHelical, coord, species, electronicSolver, rCellVecs, latVecs, recVecs2p, tPeriodic,&
       & tRealHS, tSpinSharedEf, tSpinOrbit, tDualSpinOrbit, tFillKSep, tFixEf, tMulliken,&
-      & iDistribFn, tempElec, nEl, parallelKS, Ef, mu, energy, hybridXc, eigen, filling, rhoPrim,&
-      & xi, orbitalL, HSqrReal, SSqrReal, eigvecsReal, iRhoPrim, HSqrCplx, SSqrCplx, eigvecsCplx,&
-      & rhoSqrReal, densityMatrix, nNeighbourCam, nNeighbourCamSym, deltaDftb, apiCallBack,&
-      & dangerousChanges, errStatus)
+      & iDistribFn, tempElec, nEl, parallelKS, Ef, mu, energy, hybridXc, roks, eigen, filling,&
+      & rhoPrim, xi, orbitalL, HSqrReal, SSqrReal, eigvecsReal, iRhoPrim, HSqrCplx, SSqrCplx,&
+      & eigvecsCplx, rhoSqrReal, densityMatrix, nNeighbourCam, nNeighbourCamSym, deltaDftb,&
+      & apiCallBack, dangerousChanges, errStatus)
 
     use dftbp_elecsolvers_dmsolvertypes, only : densityMatrixTypes
 
@@ -2913,6 +2914,9 @@ contains
     !> Data for hybrid xc-functional calculation
     class(THybridXcFunc), allocatable, intent(inout) :: hybridXc
 
+    !> ROKS calculation data
+    type(TRoksCalc), allocatable, intent(inout) :: roks
+
     !> Eigenvalues (level, kpoint, spin)
     real(dp), intent(out) :: eigen(:,:,:)
 
@@ -2989,8 +2993,8 @@ contains
           & nNeighbourSK, iSparseStart, img2CentCell, iCellVec, cellVec, kPoint, kWeight, orb,&
           & tHelical, coord, species, electronicSolver, rCellVecs, latVecs, recVecs2p, tPeriodic,&
           & tRealHS, tSpinSharedEf, tSpinOrbit, tDualSpinOrbit, tFillKSep, tFixEf, tMulliken,&
-          & iDistribFn, tempElec, nEl, parallelKS, Ef, energy, hybridXc, eigen, filling, rhoPrim,&
-          & xi, orbitalL, HSqrReal, SSqrReal, eigvecsReal, iRhoPrim, HSqrCplx, SSqrCplx,&
+          & iDistribFn, tempElec, nEl, parallelKS, Ef, energy, hybridXc, roks, eigen, filling,&
+          & rhoPrim, xi, orbitalL, HSqrReal, SSqrReal, eigvecsReal, iRhoPrim, HSqrCplx, SSqrCplx,&
           & eigvecsCplx, rhoSqrReal, densityMatrix, nNeighbourCam, nNeighbourCamSym, deltaDftb,&
           & apiCallBack, dangerousChanges, errStatus)
       @:PROPAGATE_ERROR(errStatus)
@@ -3031,8 +3035,8 @@ contains
       & nNeighbourSK, iSparseStart, img2CentCell, iCellVec, cellVec, kPoint, kWeight, orb,&
       & tHelical, coord, species, electronicSolver, rCellVecs, latVecs, recVecs2p, tPeriodic,&
       & tRealHS, tSpinSharedEf, tSpinOrbit, tDualSpinOrbit, tFillKSep, tFixEf, tMulliken,&
-      & iDistribFn, tempElec, nEl, parallelKS, Ef, energy, hybridXc, eigen, filling, rhoPrim, xi,&
-      & orbitalL, HSqrReal, SSqrReal, eigvecsReal, iRhoPrim, HSqrCplx, SSqrCplx, eigvecsCplx,&
+      & iDistribFn, tempElec, nEl, parallelKS, Ef, energy, hybridXc, roks, eigen, filling, rhoPrim,&
+      & xi, orbitalL, HSqrReal, SSqrReal, eigvecsReal, iRhoPrim, HSqrCplx, SSqrCplx, eigvecsCplx,&
       & rhoSqrReal, densityMatrix, nNeighbourCam, nNeighbourCamSym, deltaDftb, apiCallBack,&
       & dangerousChanges, errStatus)
 
@@ -3141,6 +3145,9 @@ contains
     !> Data for hybrid xc-functional calculation
     class(THybridXcFunc), intent(inout), allocatable :: hybridXc
 
+    !> ROKS calculation data
+    type(TRoksCalc), allocatable, intent(inout) :: roks
+    
     !> Eigenvalues (level, kpoint, spin)
     real(dp), intent(out) :: eigen(:,:,:)
 
@@ -3205,7 +3212,17 @@ contains
 
     nSpin = size(ints%hamiltonian, dim=2)
     call env%globalTimer%startTimer(globalTimers%diagonalization)
-    if (nSpin /= 4) then
+    
+    if (allocated(roks)) then
+
+      call buildDenseRoksHamiltonians(env, denseDesc, ints, neighbourList,&
+          & nNeighbourSK, iSparseStart, img2CentCell, roks)
+
+      call env%globalTimer%stopTimer(globalTimers%diagonalization)
+
+      call error("Initial ROKS effective Hamiltonian built; diagonalization is not implemented")
+
+    else if (nSpin /= 4) then
       if (tRealHS) then
         call buildAndDiagDenseRealHam(env, denseDesc, ints, species, neighbourList,&
             & symNeighbourList, nNeighbourSK, iSparseStart, img2CentCell, orb, tPeriodic, tHelical,&
@@ -3264,7 +3281,63 @@ contains
     call env%globalTimer%stopTimer(globalTimers%densityMatrix)
 
   end subroutine getDensityFromDenseDiag
+  
+  !> Build the conventional alpha and beta Hamiltonians for ROKS.
+  subroutine buildDenseRoksHamiltonians(env, denseDesc, ints, neighbourList, nNeighbourSK,&
+      & iSparseStart, img2CentCell, roks)
 
+    !> Environment settings
+    type(TEnvironment), intent(inout) :: env
+
+    !> Dense matrix descriptor
+    type(TDenseDescr), intent(in) :: denseDesc
+
+    !> Sparse integral matrices
+    type(TIntegral), intent(in) :: ints
+    
+    !> Neighbour list
+    type(TNeighbourList), intent(in) :: neighbourList
+
+    !> Number of neighbours for each atom
+    integer, intent(in) :: nNeighbourSK(:)
+
+    !> Sparse matrix block offsets
+    integer, intent(in) :: iSparseStart(:,:)
+
+    !> Map image atoms to central-cell atoms
+    integer, intent(in) :: img2CentCell(:)
+
+    !> ROKS calculation data
+    type(TRoksCalc), intent(inout) :: roks
+
+    if (size(ints%hamiltonian, dim=2) /= 2) then
+      call error("ROKS requires exactly two spin Hamiltonians")
+    end if
+
+    call env%globalTimer%startTimer(globalTimers%sparseToDense)
+
+#:if WITH_SCALAPACK
+    call unpackHSRealBlacs(env%blacs, ints%hamiltonian(:,1),&
+        & neighbourList%iNeighbour, nNeighbourSK, iSparseStart, img2CentCell,&
+        & denseDesc, roks%hamAlpha)
+
+    call unpackHSRealBlacs(env%blacs, ints%hamiltonian(:,2),&
+        & neighbourList%iNeighbour, nNeighbourSK, iSparseStart, img2CentCell,&
+        & denseDesc, roks%hamBeta)
+#:else
+    call unpackHS(roks%hamAlpha, ints%hamiltonian(:,1), neighbourList%iNeighbour,&
+        & nNeighbourSK, denseDesc%iAtomStart, iSparseStart, img2CentCell)
+
+    call unpackHS(roks%hamBeta, ints%hamiltonian(:,2), neighbourList%iNeighbour,&
+        & nNeighbourSK, denseDesc%iAtomStart, iSparseStart, img2CentCell)
+#:endif
+
+    call env%globalTimer%stopTimer(globalTimers%sparseToDense)
+
+    call roks%buildInitialHamiltonian()
+
+  end subroutine buildDenseRoksHamiltonians
+  
 
   !> Builds and diagonalises dense Hamiltonians.
   subroutine buildAndDiagDenseRealHam(env, denseDesc, ints, species, neighbourList,&

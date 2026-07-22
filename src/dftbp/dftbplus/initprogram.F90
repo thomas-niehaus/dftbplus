@@ -3127,6 +3127,10 @@ contains
         call error("ROKS currently does not support helical structures")
       end if
 
+      if (this%isHybridXc) then
+        call error("ROKS currently does not support hybrid functionals")
+      end if
+
     end if
     
     if (allocated(this%reks)) then
@@ -3150,8 +3154,7 @@ contains
 
       write(stdOut, "(A,I0,A,I0)") "ROKS matrix dimensions: ", &
           & nLocalRows, " x ", nLocalCols
-
-      call error("ROKS Hamiltonian storage allocated; construction is not implemented")
+      
     end if
 
   #:if WITH_TRANSPORT

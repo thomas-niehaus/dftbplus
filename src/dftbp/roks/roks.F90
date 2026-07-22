@@ -43,6 +43,9 @@ module dftbp_roks_roks
     !> Allocate dense Hamiltonian storage.
     procedure :: allocateMatrices => TRoksCalc_allocateMatrices
 
+    !> Build the initial common-orbital Hamiltonian.
+    procedure :: buildInitialHamiltonian => TRoksCalc_buildInitialHamiltonian
+
   end type TRoksCalc
 
 
@@ -125,5 +128,32 @@ contains
 
   end subroutine TRoksCalc_allocateMatrices
 
+  !> Build an initial common-orbital Hamiltonian from the alpha and beta Hamiltonians.
+  subroutine TRoksCalc_buildInitialHamiltonian(this)
+
+    !> ROKS calculation data.
+    class(TRoksCalc), intent(inout) :: this
+
+    if (.not. allocated(this%hamAlpha)) then
+      call error("ROKS alpha Hamiltonian has not been allocated")
+    end if
+
+    if (.not. allocated(this%hamBeta)) then
+      call error("ROKS beta Hamiltonian has not been allocated")
+    end if
+
+    if (.not. allocated(this%hamEffective)) then
+      call error("ROKS effective Hamiltonian has not been allocated")
+    end if
+
+    if (any(shape(this%hamAlpha) /= shape(this%hamBeta)) .or. &
+        & any(shape(this%hamAlpha) /= shape(this%hamEffective))) then
+      call error("Inconsistent ROKS Hamiltonian dimensions")
+    end if
+
+    this%hamEffective(:,:) = 0.5_dp * &
+        & (this%hamAlpha(:,:) + this%hamBeta(:,:))
+
+  end subroutine TRoksCalc_buildInitialHamiltonian
 
 end module dftbp_roks_roks
