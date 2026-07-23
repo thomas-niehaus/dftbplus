@@ -149,6 +149,9 @@ module dftbp_dftbplus_inputdata
     !> Whether a ROKS calculation is requested
     logical :: enabled = .false.
 
+    !> Whether internal ROKS diagnostics should be printed
+    logical :: writeDiagnostics = .false.
+
   end type TRoksInp
 
 

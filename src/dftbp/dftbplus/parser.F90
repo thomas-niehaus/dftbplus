@@ -153,7 +153,7 @@ contains
 
     type(TStatus) :: errStatus
     type(TOrbitals) :: orb
-    type(fnode), pointer :: root, tmp, driverNode, hamNode, analysisNode, child, dummy, roksNode
+    type(fnode), pointer :: root, tmp, driverNode, hamNode, analysisNode, child, dummy
     logical :: tReadAnalysis
     integer, allocatable :: implicitParserVersion
 
@@ -177,14 +177,6 @@ contains
     ! Hamiltonian settings that need to know settings from the REKS block
     call getChildValue(root, "Reks", dummy, "None", child=child)
     call readReks(child, dummy, input%ctrl, input%geom)
-
-    ! Restricted open-shell Kohn-Sham settings
-    call getChildValue(root, "Roks", dummy, "None", child=roksNode)
-    call readRoks(roksNode, dummy, input%ctrl)
-    if (input%ctrl%roksInp%enabled .and.&
-        & input%ctrl%reksInp%reksAlg /= reksTypes%noReks) then
-      call detailedError(roksNode, "ROKS and REKS cannot be used simultaneously")
-    end if
 
     call getChild(root, "Transport", child, requested=.false.)
 
@@ -226,6 +218,13 @@ contains
 
     if (errStatus%hasError()) then
       call error(errStatus%message)
+    end if
+
+    ! ROKS and REKS are mutually exclusive.
+    if (input%ctrl%roksInp%enabled .and. &
+        & input%ctrl%reksInp%reksAlg /= reksTypes%noReks) then
+      call detailedError(hamNode, &
+          "ROKS and REKS cannot be used simultaneously")
     end if
 
     call getChildValue(root, "Driver", driverNode, "", child=child, allowEmptyValue=.true.)
@@ -1356,6 +1355,9 @@ contains
 
     ! SCC
     call getChildValue(node, "SCC", ctrl%tSCC, .false.)
+
+    ! Restricted open-shell Kohn-Sham
+    call getChildValue(node, "ROKS", ctrl%roksInp%enabled, .false.)
 
     call parseHybridBlock(node, ctrl%hybridXcInp, ctrl, geo, skFiles)
 
@@ -4053,7 +4055,7 @@ contains
     tWriteDetailedOutDef = .true.
   #:endif
     call getChildValue(node, "WriteDetailedOut", ctrl%tWriteDetailedOut, tWriteDetailedOutDef)
-
+    call getChildValue(node, "WriteRoksDiagnostics", ctrl%roksInp%writeDiagnostics, .false.)
     call getChildValue(node, "WriteAutotestTag", ctrl%tWriteTagged, .false.)
     call getChildValue(node, "WriteDetailedXML", ctrl%tWriteDetailedXML, .false.)
     call getChildValue(node, "WriteResultsTag", ctrl%tWriteResultsTag, .false.)
@@ -8121,36 +8123,6 @@ contains
     end if
 
   end subroutine parseHybridBlock
-
-
-  !> Reads the ROKS block
-  subroutine readRoks(node, value, ctrl)
-
-    !> ROKS node in the input tree
-    type(fnode), pointer, intent(in) :: node
-
-    !> Polymorphic ROKS value
-    type(fnode), pointer, intent(in) :: value
-
-    !> Control structure to fill
-    type(TControl), intent(inout) :: ctrl
-
-    type(string) :: buffer
-
-    call getNodeName(value, buffer)
-
-    select case (char(buffer))
-    case ("none")
-      ctrl%roksInp%enabled = .false.
-    case ("simple")
-      ctrl%roksInp%enabled = .true.
-    case default
-      call getNodeHSDName(value, buffer)
-      call detailedError(node, "Invalid ROKS algorithm '" // char(buffer) // "'")
-    end select
-
-  end subroutine readRoks
-
 
   !> Reads the REKS block
   subroutine readReks(node, dummy, ctrl, geo)

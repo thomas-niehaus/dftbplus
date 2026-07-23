@@ -1774,12 +1774,9 @@ contains
         & this%nEl0, this%nEl)
 
     if (allocated(this%roks)) then
-      call this%roks%init(this%nEl, this%orb%nOrb)
-
-      write(stdOut, "(A,I0)") "ROKS core orbitals:       ", this%roks%Nc
-      write(stdOut, "(A,I0)") "ROKS open-shell orbitals: ", this%roks%No
-      write(stdOut, "(A,I0)") "ROKS virtual orbitals:    ", this%roks%Nv
-
+      call this%roks%init(this%nEl, this%orb%nOrb, input%ctrl%roksInp%writeDiagnostics)
+      write(stdOut, "(A,I0,A,I0,A,I0)") "--> ROKS: core/open/virtual orbitals = ", &
+          & this%roks%Nc, " / ", this%roks%No, " / ", this%roks%Nv
     end if
 
     call initElectronFilling_(input, this%nSpin, this%Ef, this%iDistribFn, this%tempElec,&
@@ -3157,10 +3154,10 @@ contains
 
     if (allocated(this%roks)) then
       call this%roks%allocateMatrices(nLocalRows, nLocalCols)
-
-      write(stdOut, "(A,I0,A,I0)") "ROKS matrix dimensions: ", &
-          & nLocalRows, " x ", nLocalCols
-      
+      if (this%roks%writeDiagnostics) then
+        write(stdOut, "(A,I0,A,I0)") "--> ROKS: matrix dimensions = ", &
+            & nLocalRows, " x ", nLocalCols
+      end if
     end if
 
   #:if WITH_TRANSPORT

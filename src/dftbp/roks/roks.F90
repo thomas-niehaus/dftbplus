@@ -1,8 +1,19 @@
 !--------------------------------------------------------------------------------------------------!
 !  DFTB+: general package for performing fast atomistic simulations                                !
+!  Copyright (C) 2006 - 2025  DFTB+ developers group                                               !
+!                                                                                                  !
+!  See the LICENSE file for terms of usage and distribution.                                       !
 !--------------------------------------------------------------------------------------------------!
+#:include 'common.fypp'
 
 !> Restricted open-shell Kohn-Sham data and routines.
+!>
+!> Constructs a common set of spatial orbitals from conventional alpha-
+!> and beta-spin DFTB Hamiltonians. The effective Hamiltonian uses the
+!> Roothaan core/open/virtual block structure employed for high-spin
+!> restricted open-shell calculations.
+!>
+!> The present implementation supports real, dense, Gamma-point matrices.
 module dftbp_roks_roks
 
   use dftbp_common_globalenv, only : stdOut
@@ -13,7 +24,6 @@ module dftbp_roks_roks
 
   private
   public :: TRoksCalc
-
 
   !> Runtime data for a restricted open-shell Kohn-Sham calculation.
   type :: TRoksCalc
@@ -26,6 +36,9 @@ module dftbp_roks_roks
 
     !> Number of unoccupied virtual orbitals.
     integer :: Nv = 0
+
+    !> Whether internal ROKS diagnostics should be printed.
+    logical :: writeDiagnostics = .false.
 
     !> Conventional alpha-spin Hamiltonian in the AO basis.
     real(dp), allocatable :: hamAlpha(:,:)
@@ -59,16 +72,19 @@ module dftbp_roks_roks
     !> Initialize the core, open-shell and virtual orbital counts.
     procedure :: init => TRoksCalc_init
 
-    !> Allocate dense Hamiltonian storage.
+    !> Allocate dense ROKS Hamiltonian and orbital storage.
     procedure :: allocateMatrices => TRoksCalc_allocateMatrices
 
-    !> Build the initial common-orbital Hamiltonian.
+    !> Build the spin-averaged Hamiltonian used to obtain trial common orbitals.
     procedure :: buildInitialHamiltonian => TRoksCalc_buildInitialHamiltonian
 
+    !> Transform the alpha and beta Hamiltonians to the current common MO basis.
     procedure :: transformHamiltoniansToMo => TRoksCalc_transformHamiltoniansToMo
 
+    !> Construct the effective ROKS Hamiltonian and transform it to the AO basis.
     procedure :: buildEffectiveHamiltonian => TRoksCalc_buildEffectiveHamiltonian
 
+    !> Insert the spin-dependent core-open and open-virtual MO blocks.
     procedure :: applyMoCouplings => TRoksCalc_applyMoCouplings
 
   end type TRoksCalc
@@ -76,9 +92,12 @@ module dftbp_roks_roks
 
 contains
 
-
-  !> Initialize the ROKS orbital spaces from the spin populations.
-  subroutine TRoksCalc_init(this, nEl, nOrb)
+  !> Initialize the high-spin restricted open-shell orbital partition.
+  !>
+  !> The beta population defines the number of doubly occupied core
+  !> orbitals. The excess alpha population defines the number of singly
+  !> occupied open-shell orbitals. All remaining orbitals are virtual.
+  subroutine TRoksCalc_init(this, nEl, nOrb, writeDiagnostics)
 
     !> ROKS calculation data.
     class(TRoksCalc), intent(out) :: this
@@ -88,6 +107,11 @@ contains
 
     !> Number of available spatial orbitals.
     integer, intent(in) :: nOrb
+
+    !> Whether internal ROKS diagnostics should be printed.
+    logical, intent(in) :: writeDiagnostics
+
+    this%writeDiagnostics = writeDiagnostics
 
     if (size(nEl) /= 2) then
       call error("ROKS requires two spin electron populations")
@@ -141,18 +165,6 @@ contains
       call error("Invalid dense matrix dimensions for ROKS")
     end if
 
-    if (allocated(this%hamAlpha) .or. &
-        & allocated(this%hamBeta) .or. &
-        & allocated(this%hamAlphaMo) .or. &
-        & allocated(this%hamBetaMo) .or. &
-        & allocated(this%hamEffective) .or. &
-        & allocated(this%coefficients) .or. &
-        & allocated(this%overlap) .or. &
-        & allocated(this%hamEffectiveMo) .or. &
-        & allocated(this%eigenvalues)) then
-      call error("ROKS matrices have already been allocated")
-    end if
-
     allocate(this%hamAlpha(nRows, nCols), source=0.0_dp)
     allocate(this%hamBeta(nRows, nCols), source=0.0_dp)
     allocate(this%hamAlphaMo(nRows, nCols), source=0.0_dp)
@@ -171,22 +183,7 @@ contains
     !> ROKS calculation data.
     class(TRoksCalc), intent(inout) :: this
 
-    if (.not. allocated(this%hamAlpha)) then
-      call error("ROKS alpha Hamiltonian has not been allocated")
-    end if
-
-    if (.not. allocated(this%hamBeta)) then
-      call error("ROKS beta Hamiltonian has not been allocated")
-    end if
-
-    if (.not. allocated(this%hamEffective)) then
-      call error("ROKS effective Hamiltonian has not been allocated")
-    end if
-
-    if (any(shape(this%hamAlpha) /= shape(this%hamBeta)) .or. &
-        & any(shape(this%hamAlpha) /= shape(this%hamEffective))) then
-      call error("Inconsistent ROKS Hamiltonian dimensions")
-    end if
+    @:ASSERT(all(shape(this%hamAlpha) == shape(this%hamEffective)))
 
     this%hamEffective(:,:) = 0.5_dp * &
         & (this%hamAlpha(:,:) + this%hamBeta(:,:))
@@ -199,23 +196,6 @@ contains
 
     class(TRoksCalc), intent(inout) :: this
 
-    if (.not. allocated(this%coefficients)) then
-      call error("ROKS coefficients have not been allocated")
-    end if
-
-    if (.not. allocated(this%hamAlpha)) then
-      call error("ROKS alpha Hamiltonian has not been allocated")
-    end if
-
-    if (.not. allocated(this%hamBeta)) then
-      call error("ROKS beta Hamiltonian has not been allocated")
-    end if
-
-    if (.not. allocated(this%hamAlphaMo) .or. &
-        & .not. allocated(this%hamBetaMo)) then
-      call error("ROKS MO-basis Hamiltonians have not been allocated")
-    end if
-
     this%hamAlphaMo = matmul(transpose(this%coefficients),&
         & matmul(this%hamAlpha, this%coefficients))
 
@@ -224,7 +204,16 @@ contains
 
   end subroutine TRoksCalc_transformHamiltoniansToMo
 
-  !> Apply ROKS coupling rules in the core/open/virtual MO blocks.
+  !> Assemble spin-dependent couplings between the ROKS orbital spaces.
+  !>
+  !> The alpha/beta mean defines the common part of the effective
+  !> Hamiltonian. Couplings between doubly and singly occupied orbitals
+  !> are taken from the beta Hamiltonian, while couplings between singly
+  !> occupied and empty orbitals are taken from the alpha Hamiltonian.
+  !> The reverse blocks are assigned by transposition to retain a real
+  !> symmetric matrix.
+  !> A related common-orbital construction is used by the PySCF
+  !> restricted-open-shell implementation; see pyscf.scf.rohf.
   subroutine TRoksCalc_applyMoCouplings(this)
 
     class(TRoksCalc), intent(inout) :: this
@@ -241,13 +230,8 @@ contains
     
     nOrb = size(this%hamEffectiveMo, dim=1)
 
-    if (size(this%hamEffectiveMo, dim=2) /= nOrb) then
-      call error("ROKS effective MO Hamiltonian must be square")
-    end if
-
-    if (this%Nc + this%No + this%Nv /= nOrb) then
-      call error("ROKS orbital partition does not match Hamiltonian size")
-    end if
+    @:ASSERT(size(this%hamEffectiveMo, dim=2) == nOrb)
+    @:ASSERT(this%Nc + this%No + this%Nv == nOrb)
 
     iCoreFirst = 1
     iCoreLast = this%Nc
@@ -291,11 +275,16 @@ contains
           & iOpenFirst:iOpenLast, iVirtualFirst:iVirtualLast))
     end if
 
-    write(stdOut, "(A,ES12.4)") "ROKS core-open correction: ", coreOpenCorrection
-    write(stdOut, "(A,ES12.4)") "ROKS open-virtual correction: ", openVirtualCorrection
+    if (this%writeDiagnostics) then
+      write(stdOut, "(A,ES12.4)") "--> ROKS: core-open correction magnitude "//&
+          &"(may vanish by symmetry): ", coreOpenCorrection
+      write(stdOut, "(A,ES12.4)") "--> ROKS: open-virtual correction magnitude "//&
+          &"(may vanish by symmetry): ", openVirtualCorrection
+    end if
 
   end subroutine TRoksCalc_applyMoCouplings
-  
+
+  !> Form the common ROKS Hamiltonian and return it to the AO basis.
   subroutine TRoksCalc_buildEffectiveHamiltonian(this)
 
     class(TRoksCalc), intent(inout) :: this
@@ -308,8 +297,10 @@ contains
 
     call this%applyMoCouplings()
 
-    write(stdOut, "(A,ES12.4)") "ROKS effective MO symmetry error: ", &
-        & maxval(abs(this%hamEffectiveMo - transpose(this%hamEffectiveMo)))
+    if (this%writeDiagnostics) then
+      write(stdOut, "(A,ES12.4)") "--> ROKS: effective MO symmetry error ",&
+          & maxval(abs(this%hamEffectiveMo - transpose(this%hamEffectiveMo)))
+    end if
 
     ! H_AO = S C H_MO C^T S
     tmp = matmul(this%overlap, this%coefficients)

@@ -3208,6 +3208,8 @@ contains
     !> Status of operation
     type(TStatus), intent(out) :: errStatus
 
+    !> Eigenvalues of the preliminary spin-averaged Hamiltonian.
+    !! Used only to diagnose the effect of the ROKS block construction.
     real(dp), allocatable :: initialRoksEigenvalues(:)
 
     integer :: iKS, iSpin, nSpin
@@ -3217,9 +3219,14 @@ contains
     
     if (allocated(roks)) then
 
+      ! Build the conventional alpha and beta DFTB Hamiltonians. Their average provides a
+      ! preliminary common-orbital Hamiltonian.
       call buildDenseRoksHamiltonians(env, denseDesc, ints, neighbourList,&
           & nNeighbourSK, iSparseStart, img2CentCell, roks, SSqrReal)
 
+      ! Obtain preliminary common orbitals. These orbitals define the
+      ! core, open-shell and virtual subspaces in which the spin-dependent
+      ! effective Hamiltonian is assembled.
       HSqrReal(:,:) = roks%hamEffective(:,:)
 
 #:if WITH_SCALAPACK
@@ -3231,22 +3238,24 @@ contains
           & roks%eigenvalues, errStatus)
       @:PROPAGATE_ERROR(errStatus)
 
-      ! diagDenseMtx returns the eigenvectors in the Hamiltonian work array.
       roks%coefficients(:,:) = HSqrReal(:,:)
 
 #:endif
 
       initialRoksEigenvalues = roks%eigenvalues
       
-      ! Transform alpha and beta Hamiltonians using the new shared orbitals.
+      ! Represent both spin Hamiltonians in the preliminary common MO basis, then select the appropriate
+      ! core/open/virtual coupling blocks to form one real symmetric effective Hamiltonian.
       call roks%transformHamiltoniansToMo()
-
       call roks%buildEffectiveHamiltonian()
 
-      write(stdOut, "(A,ES12.4)") "ROKS effective AO correction norm: ", &
-          & maxval(abs(roks%hamEffective - &
-          & 0.5_dp * (roks%hamAlpha + roks%hamBeta)))
+      if (roks%writeDiagnostics) then
+        write(stdOut, "(A,ES12.4)") "--> ROKS: effective AO correction norm ",&
+           & maxval(abs(roks%hamEffective - 0.5_dp * (roks%hamAlpha + roks%hamBeta)))
+      end if
 
+      ! Diagonalize the assembled effective Hamiltonian. The resulting common orbitals are copied to both
+      ! spin channels and used for the spin-dependent occupation and density construction.
       HSqrReal(:,:) = roks%hamEffective(:,:)
       SSqrReal(:,:) = roks%overlap(:,:)
 
@@ -3259,16 +3268,18 @@ contains
           & roks%eigenvalues, errStatus)
       @:PROPAGATE_ERROR(errStatus)
 
-      ! The serial solver returns eigenvectors in the Hamiltonian array.
       roks%coefficients(:,:) = HSqrReal(:,:)
 #:endif
       
-      write(stdOut, "(A,ES12.4)") "ROKS orbital update eigenvalue change: ", &
-          & maxval(abs(roks%eigenvalues - initialRoksEigenvalues))
-      
+      if (roks%writeDiagnostics) then
+        write(stdOut, "(A,ES12.4)") "--> ROKS: orbital update eigenvalue change ",&
+            & maxval(abs(roks%eigenvalues - initialRoksEigenvalues))
+      end if
+
+      ! ROKS uses one common spatial-orbital set. Store the same eigenvalues and coefficients for both
+      ! spin channels; the alpha and beta densities differ through their occupations.
       do iKS = 1, parallelKS%nLocalKS
         iSpin = parallelKS%localKS(2, iKS)
-
         eigen(:,1,iSpin) = roks%eigenvalues
         eigVecsReal(:,:,iKS) = roks%coefficients
       end do
@@ -3333,7 +3344,7 @@ contains
 
   end subroutine getDensityFromDenseDiag
   
-  !> Build the conventional alpha and beta Hamiltonians for ROKS.
+  !> Expand the two sparse spin Hamiltonians required by ROKS.
   subroutine buildDenseRoksHamiltonians(env, denseDesc, ints, neighbourList, nNeighbourSK,&
       & iSparseStart, img2CentCell, roks, overlap)
 
