@@ -3208,7 +3208,9 @@ contains
     !> Status of operation
     type(TStatus), intent(out) :: errStatus
 
-    integer :: nSpin
+    real(dp), allocatable :: initialRoksEigenvalues(:)
+
+    integer :: iKS, iSpin, nSpin
 
     nSpin = size(ints%hamiltonian, dim=2)
     call env%globalTimer%startTimer(globalTimers%diagonalization)
@@ -3216,12 +3218,61 @@ contains
     if (allocated(roks)) then
 
       call buildDenseRoksHamiltonians(env, denseDesc, ints, neighbourList,&
-          & nNeighbourSK, iSparseStart, img2CentCell, roks)
+          & nNeighbourSK, iSparseStart, img2CentCell, roks, SSqrReal)
 
-      call env%globalTimer%stopTimer(globalTimers%diagonalization)
+      HSqrReal(:,:) = roks%hamEffective(:,:)
 
-      call error("Initial ROKS effective Hamiltonian built; diagonalization is not implemented")
+#:if WITH_SCALAPACK
+      call diagDenseMtxBlacs(electronicSolver, 1, 'V', denseDesc%blacsOrbSqr,&
+          & HSqrReal, SSqrReal, roks%eigenvalues, roks%coefficients, errStatus)
+      @:PROPAGATE_ERROR(errStatus)
+#:else
+      call diagDenseMtx(env, electronicSolver, 'V', HSqrReal, SSqrReal,&
+          & roks%eigenvalues, errStatus)
+      @:PROPAGATE_ERROR(errStatus)
 
+      ! diagDenseMtx returns the eigenvectors in the Hamiltonian work array.
+      roks%coefficients(:,:) = HSqrReal(:,:)
+
+#:endif
+
+      initialRoksEigenvalues = roks%eigenvalues
+      
+      ! Transform alpha and beta Hamiltonians using the new shared orbitals.
+      call roks%transformHamiltoniansToMo()
+
+      call roks%buildEffectiveHamiltonian()
+
+      write(stdOut, "(A,ES12.4)") "ROKS effective AO correction norm: ", &
+          & maxval(abs(roks%hamEffective - &
+          & 0.5_dp * (roks%hamAlpha + roks%hamBeta)))
+
+      HSqrReal(:,:) = roks%hamEffective(:,:)
+      SSqrReal(:,:) = roks%overlap(:,:)
+
+#:if WITH_SCALAPACK
+      call diagDenseMtxBlacs(electronicSolver, 1, 'V', denseDesc%blacsOrbSqr,&
+          & HSqrReal, SSqrReal, roks%eigenvalues, roks%coefficients, errStatus)
+      @:PROPAGATE_ERROR(errStatus)
+#:else
+      call diagDenseMtx(env, electronicSolver, 'V', HSqrReal, SSqrReal,&
+          & roks%eigenvalues, errStatus)
+      @:PROPAGATE_ERROR(errStatus)
+
+      ! The serial solver returns eigenvectors in the Hamiltonian array.
+      roks%coefficients(:,:) = HSqrReal(:,:)
+#:endif
+      
+      write(stdOut, "(A,ES12.4)") "ROKS orbital update eigenvalue change: ", &
+          & maxval(abs(roks%eigenvalues - initialRoksEigenvalues))
+      
+      do iKS = 1, parallelKS%nLocalKS
+        iSpin = parallelKS%localKS(2, iKS)
+
+        eigen(:,1,iSpin) = roks%eigenvalues
+        eigVecsReal(:,:,iKS) = roks%coefficients
+      end do
+      
     else if (nSpin /= 4) then
       if (tRealHS) then
         call buildAndDiagDenseRealHam(env, denseDesc, ints, species, neighbourList,&
@@ -3284,7 +3335,7 @@ contains
   
   !> Build the conventional alpha and beta Hamiltonians for ROKS.
   subroutine buildDenseRoksHamiltonians(env, denseDesc, ints, neighbourList, nNeighbourSK,&
-      & iSparseStart, img2CentCell, roks)
+      & iSparseStart, img2CentCell, roks, overlap)
 
     !> Environment settings
     type(TEnvironment), intent(inout) :: env
@@ -3310,6 +3361,9 @@ contains
     !> ROKS calculation data
     type(TRoksCalc), intent(inout) :: roks
 
+    !> Dense overlap matrix.
+    real(dp), intent(out) :: overlap(:,:)
+
     if (size(ints%hamiltonian, dim=2) /= 2) then
       call error("ROKS requires exactly two spin Hamiltonians")
     end if
@@ -3317,6 +3371,10 @@ contains
     call env%globalTimer%startTimer(globalTimers%sparseToDense)
 
 #:if WITH_SCALAPACK
+    call unpackHSRealBlacs(env%blacs, ints%overlap,&
+        & neighbourList%iNeighbour, nNeighbourSK, iSparseStart, img2CentCell,&
+        & denseDesc, overlap)
+    
     call unpackHSRealBlacs(env%blacs, ints%hamiltonian(:,1),&
         & neighbourList%iNeighbour, nNeighbourSK, iSparseStart, img2CentCell,&
         & denseDesc, roks%hamAlpha)
@@ -3325,15 +3383,24 @@ contains
         & neighbourList%iNeighbour, nNeighbourSK, iSparseStart, img2CentCell,&
         & denseDesc, roks%hamBeta)
 #:else
+    call unpackHS(overlap, ints%overlap, neighbourList%iNeighbour,&
+        & nNeighbourSK, denseDesc%iAtomStart, iSparseStart, img2CentCell)
+    
     call unpackHS(roks%hamAlpha, ints%hamiltonian(:,1), neighbourList%iNeighbour,&
         & nNeighbourSK, denseDesc%iAtomStart, iSparseStart, img2CentCell)
 
     call unpackHS(roks%hamBeta, ints%hamiltonian(:,2), neighbourList%iNeighbour,&
         & nNeighbourSK, denseDesc%iAtomStart, iSparseStart, img2CentCell)
+
+    call adjointLowerTriangle(overlap)
+    call adjointLowerTriangle(roks%hamAlpha)
+    call adjointLowerTriangle(roks%hamBeta)
 #:endif
 
     call env%globalTimer%stopTimer(globalTimers%sparseToDense)
 
+    roks%overlap(:,:) = overlap(:,:)
+    
     call roks%buildInitialHamiltonian()
 
   end subroutine buildDenseRoksHamiltonians
