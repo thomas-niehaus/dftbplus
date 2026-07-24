@@ -88,10 +88,6 @@ subroutine diagDenseRoksHamiltonian(env, denseDesc, electronicSolver, &
 
   do iRoks = 1, roks%maxIterations
 
-    if (roks%writeDiagnostics) then
-      write(stdOut, "(A,I0)") "--> ROKS: inner orbital iteration ", iRoks
-    end if
-
     ! Construct the effective Hamiltonian using the current common
     ! orbitals and the fixed alpha and beta Hamiltonians.
     call roks%transformHamiltoniansToMo()
@@ -119,8 +115,8 @@ subroutine diagDenseRoksHamiltonian(env, denseDesc, electronicSolver, &
     roksStationarityResidual = roks%getStationarityResidual()
 
     if (roks%writeDiagnostics) then
-      write(stdOut, "(A,ES12.4)") "--> ROKS: orbital-stationarity residual ",&
-         & roksStationarityResidual
+      write(stdOut, "(A,I3,A,ES12.4)") "--> ROKS: inner iteration ", iRoks, &
+          & ", residual ", roksStationarityResidual
     end if
 
     if (roksStationarityResidual < roks%tolerance) then
@@ -130,12 +126,11 @@ subroutine diagDenseRoksHamiltonian(env, denseDesc, electronicSolver, &
       
   end do
 
-  if (roks%writeDiagnostics) then
-    write(stdOut, "(A,I0)") "--> ROKS: inner orbital iterations ", min(iRoks,roks%maxIterations)
-    write(stdOut, "(A,ES12.4)") "--> ROKS: final orbital-stationarity residual ",&
-        & roksStationarityResidual
+  if (roks%writeDiagnostics .and. roksConverged) then
+    write(stdOut, "(A,I0,A,ES12.4)") "--> ROKS: converged in ", min(iRoks, roks%maxIterations), &
+       & " inner iterations; final residual ", roksStationarityResidual
   end if
-    
+
   if (.not. roksConverged) then
     call warning("ROKS inner orbital iteration did not converge")
     if (roks%writeDiagnostics) then

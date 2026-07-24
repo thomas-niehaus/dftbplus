@@ -3125,10 +3125,6 @@ contains
         call error("ROKS currently does not support helical structures")
       end if
 
-      if (this%isHybridXc) then
-        call error("ROKS currently does not support hybrid functionals")
-      end if
-
 #:if WITH_MPI
       if (input%ctrl%parallelOpts%nGroup /= 1) then
         call error("ROKS currently requires one processor group")

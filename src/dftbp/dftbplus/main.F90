@@ -3216,7 +3216,9 @@ contains
 
     if (allocated(roks)) then
       call buildDenseRoksHamiltonians(env, denseDesc, ints, neighbourList, nNeighbourSK,&
-          & iSparseStart, img2CentCell, roks, SSqrReal)
+          & iSparseStart, img2CentCell, roks, SSqrReal, hybridXc, densityMatrix%deltaRhoIn,&
+          & parallelKS, nNeighbourCam, orb, tPeriodic, errStatus)
+@:PROPAGATE_ERROR(errStatus)
       call diagDenseRoksHamiltonian(env, denseDesc, electronicSolver, roks, HSqrReal, SSqrReal,&
           & errStatus)
       @:PROPAGATE_ERROR(errStatus)
@@ -3290,7 +3292,8 @@ contains
   
   !> Expand the two sparse spin Hamiltonians required by ROKS.
   subroutine buildDenseRoksHamiltonians(env, denseDesc, ints, neighbourList, nNeighbourSK,&
-      & iSparseStart, img2CentCell, roks, overlap)
+      & iSparseStart, img2CentCell, roks, overlap, hybridXc, deltaRhoIn, parallelKS, nNeighbourCam,&
+      & orb, tPeriodic, errStatus)
 
     !> Environment settings
     type(TEnvironment), intent(inout) :: env
@@ -3318,6 +3321,29 @@ contains
 
     !> Dense overlap matrix.
     real(dp), intent(out) :: overlap(:,:)
+
+    !> Long-range-corrected or hybrid functional data.
+    class(THybridXcFunc), allocatable, intent(inout) :: hybridXc
+
+    !> Input density-matrix changes for the local KS channels.
+    real(dp), allocatable, intent(in) :: deltaRhoIn(:,:,:)
+
+    !> Distribution and spin labels of the local KS channels.
+    type(TParallelKS), intent(in) :: parallelKS
+
+    !> Number of neighbors used to construct CAM exchange.
+    integer, allocatable, intent(in) :: nNeighbourCam(:)
+
+    !> Atomic orbital information.
+    type(TOrbitals), intent(in) :: orb
+
+    !> Whether periodic boundary conditions are active.
+    logical, intent(in) :: tPeriodic
+
+    !> Status of operation.
+    type(TStatus), intent(inout) :: errStatus
+
+    integer :: iKS, iSpin
 
     if (size(ints%hamiltonian, dim=2) /= 2) then
       call error("ROKS requires exactly two spin Hamiltonians")
@@ -3353,6 +3379,43 @@ contains
 #:endif
 
     call env%globalTimer%stopTimer(globalTimers%sparseToDense)
+
+    ! Add the long-range exchange contribution separately to the
+    ! conventional alpha and beta Hamiltonians.
+    if (allocated(hybridXc)) then
+      do iKS = 1, parallelKS%nLocalKS
+        iSpin = parallelKS%localKS(2, iKS)
+
+        select case (iSpin)
+        case (1)
+
+#:if WITH_SCALAPACK
+          call hybridXc%addCamHamiltonian_real(env, denseDesc, overlap, deltaRhoIn(:,:,iKS),&
+            & roks%hamAlpha, errStatus)
+#:else
+          call hybridXc%addCamHamiltonian_real(env, deltaRhoIn(:,:,iKS), overlap, ints%overlap,&
+            & neighbourList%iNeighbour, nNeighbourCam, denseDesc%iAtomStart, iSparseStart, orb,&
+            & img2CentCell, tPeriodic, roks%hamAlpha, errStatus)
+#:endif
+          @:PROPAGATE_ERROR(errStatus)
+
+        case (2)
+
+#:if WITH_SCALAPACK
+          call hybridXc%addCamHamiltonian_real(env, denseDesc, overlap, deltaRhoIn(:,:,iKS),&
+            & roks%hamBeta, errStatus)
+#:else
+          call hybridXc%addCamHamiltonian_real(env, deltaRhoIn(:,:,iKS), overlap, ints%overlap,&
+            & neighbourList%iNeighbour, nNeighbourCam, denseDesc%iAtomStart, iSparseStart, orb,&
+            & img2CentCell, tPeriodic, roks%hamBeta, errStatus)
+#:endif
+          @:PROPAGATE_ERROR(errStatus)
+
+        case default
+          call error("Unexpected spin channel in the ROKS Hamiltonian")
+        end select
+      end do
+    end if
 
     roks%overlap(:,:) = overlap(:,:)
     
