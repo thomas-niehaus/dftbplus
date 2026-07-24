@@ -1774,8 +1774,9 @@ contains
         & this%nEl0, this%nEl)
 
     if (allocated(this%roks)) then
-      call this%roks%init(this%nEl, this%orb%nOrb, input%ctrl%roksInp%writeDiagnostics)
-      write(stdOut, "(A,I0,A,I0,A,I0)") "--> ROKS: core/open/virtual orbitals = ", &
+      call this%roks%init(this%nEl, this%orb%nOrb, input%ctrl%roksInp%maxIterations,&
+          & input%ctrl%roksInp%tolerance, input%ctrl%roksInp%writeDiagnostics)
+      write(stdOut, "(A,I0,A,I0,A,I0)") "--> ROKS: core/open/virtual orbitals = ",&
           & this%roks%Nc, " / ", this%roks%No, " / ", this%roks%Nv
     end if
 

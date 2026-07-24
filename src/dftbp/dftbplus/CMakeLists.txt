@@ -3,6 +3,7 @@ set(curdir ${CMAKE_CURRENT_SOURCE_DIR})
 set(sources-fpp
   ${curdir}/apicallback.F90
   ${curdir}/eigenvects.F90
+  ${curdir}/roksdiag.F90
   ${curdir}/elstattypes.F90
   ${curdir}/forcetypes.F90
   ${curdir}/hsdhelpers.F90

@@ -221,10 +221,8 @@ contains
     end if
 
     ! ROKS and REKS are mutually exclusive.
-    if (input%ctrl%roksInp%enabled .and. &
-        & input%ctrl%reksInp%reksAlg /= reksTypes%noReks) then
-      call detailedError(hamNode, &
-          "ROKS and REKS cannot be used simultaneously")
+    if (input%ctrl%roksInp%enabled .and. input%ctrl%reksInp%reksAlg /= reksTypes%noReks) then
+      call detailedError(hamNode, "ROKS and REKS cannot be used simultaneously")
     end if
 
     call getChildValue(root, "Driver", driverNode, "", child=child, allowEmptyValue=.true.)
@@ -1358,6 +1356,14 @@ contains
 
     ! Restricted open-shell Kohn-Sham
     call getChildValue(node, "ROKS", ctrl%roksInp%enabled, .false.)
+    call getChildValue(node, "RoksMaxIterations", ctrl%roksInp%maxIterations, 50)
+    call getChildValue(node, "RoksTolerance", ctrl%roksInp%tolerance, 1.0e-8_dp)
+    if (ctrl%roksInp%maxIterations < 1) then
+      call detailedError(node, "RoksMaxIterations must be a positive integer")
+    end if
+    if (ctrl%roksInp%tolerance <= 0.0_dp) then
+      call detailedError(node, "RoksTolerance must be positive")
+    end if
 
     call parseHybridBlock(node, ctrl%hybridXcInp, ctrl, geo, skFiles)
 

@@ -149,6 +149,12 @@ module dftbp_dftbplus_inputdata
     !> Whether a ROKS calculation is requested
     logical :: enabled = .false.
 
+    !> Maximum number of fixed-Hamiltonian ROKS orbital iterations
+    integer :: maxIterations = 50
+
+    !> Convergence tolerance for the ROKS orbital-stationarity residual
+    real(dp) :: tolerance = 1.0e-8_dp
+
     !> Whether internal ROKS diagnostics should be printed
     logical :: writeDiagnostics = .false.
 

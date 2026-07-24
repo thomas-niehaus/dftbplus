@@ -34,6 +34,7 @@ module dftbp_dftbplus_main
       & constrainSccHamiltonian, getSccHamiltonian, mergeExternalPotentials,&
       & resetExternalPotentials, resetInternalPotentials
   use dftbp_dftb_hybridxc, only : hybridXcAlgo, THybridXcFunc
+  use dftbp_dftbplus_roksdiag, only : diagDenseRoksHamiltonian
   use dftbp_dftb_mdftb, only : TMdftb
   use dftbp_dftb_nonscc, only : buildH0, buildS, TNonSccDiff
   use dftbp_dftb_onsitecorrection, only : addOnsShift, Onsblock_expand, onsBlock_reduce
@@ -3208,82 +3209,25 @@ contains
     !> Status of operation
     type(TStatus), intent(out) :: errStatus
 
-    !> Eigenvalues of the preliminary spin-averaged Hamiltonian.
-    !! Used only to diagnose the effect of the ROKS block construction.
-    real(dp), allocatable :: initialRoksEigenvalues(:)
-
     integer :: iKS, iSpin, nSpin
 
     nSpin = size(ints%hamiltonian, dim=2)
     call env%globalTimer%startTimer(globalTimers%diagonalization)
-    
+
     if (allocated(roks)) then
-
-      ! Build the conventional alpha and beta DFTB Hamiltonians. Their average provides a
-      ! preliminary common-orbital Hamiltonian.
-      call buildDenseRoksHamiltonians(env, denseDesc, ints, neighbourList,&
-          & nNeighbourSK, iSparseStart, img2CentCell, roks, SSqrReal)
-
-      ! Obtain preliminary common orbitals. These orbitals define the
-      ! core, open-shell and virtual subspaces in which the spin-dependent
-      ! effective Hamiltonian is assembled.
-      HSqrReal(:,:) = roks%hamEffective(:,:)
-
-#:if WITH_SCALAPACK
-      call diagDenseMtxBlacs(electronicSolver, 1, 'V', denseDesc%blacsOrbSqr,&
-          & HSqrReal, SSqrReal, roks%eigenvalues, roks%coefficients, errStatus)
+      call buildDenseRoksHamiltonians(env, denseDesc, ints, neighbourList, nNeighbourSK,&
+          & iSparseStart, img2CentCell, roks, SSqrReal)
+      call diagDenseRoksHamiltonian(env, denseDesc, electronicSolver, roks, HSqrReal, SSqrReal,&
+          & errStatus)
       @:PROPAGATE_ERROR(errStatus)
-#:else
-      call diagDenseMtx(env, electronicSolver, 'V', HSqrReal, SSqrReal,&
-          & roks%eigenvalues, errStatus)
-      @:PROPAGATE_ERROR(errStatus)
-
-      roks%coefficients(:,:) = HSqrReal(:,:)
-
-#:endif
-
-      initialRoksEigenvalues = roks%eigenvalues
       
-      ! Represent both spin Hamiltonians in the preliminary common MO basis, then select the appropriate
-      ! core/open/virtual coupling blocks to form one real symmetric effective Hamiltonian.
-      call roks%transformHamiltoniansToMo()
-      call roks%buildEffectiveHamiltonian()
-
-      if (roks%writeDiagnostics) then
-        write(stdOut, "(A,ES12.4)") "--> ROKS: effective AO correction norm ",&
-           & maxval(abs(roks%hamEffective - 0.5_dp * (roks%hamAlpha + roks%hamBeta)))
-      end if
-
-      ! Diagonalize the assembled effective Hamiltonian. The resulting common orbitals are copied to both
-      ! spin channels and used for the spin-dependent occupation and density construction.
-      HSqrReal(:,:) = roks%hamEffective(:,:)
-      SSqrReal(:,:) = roks%overlap(:,:)
-
-#:if WITH_SCALAPACK
-      call diagDenseMtxBlacs(electronicSolver, 1, 'V', denseDesc%blacsOrbSqr,&
-          & HSqrReal, SSqrReal, roks%eigenvalues, roks%coefficients, errStatus)
-      @:PROPAGATE_ERROR(errStatus)
-#:else
-      call diagDenseMtx(env, electronicSolver, 'V', HSqrReal, SSqrReal,&
-          & roks%eigenvalues, errStatus)
-      @:PROPAGATE_ERROR(errStatus)
-
-      roks%coefficients(:,:) = HSqrReal(:,:)
-#:endif
-      
-      if (roks%writeDiagnostics) then
-        write(stdOut, "(A,ES12.4)") "--> ROKS: orbital update eigenvalue change ",&
-            & maxval(abs(roks%eigenvalues - initialRoksEigenvalues))
-      end if
-
-      ! ROKS uses one common spatial-orbital set. Store the same eigenvalues and coefficients for both
-      ! spin channels; the alpha and beta densities differ through their occupations.
+      ! ROKS uses one common spatial-orbital set. Store the same eigenvalues and coefficients for
+      ! both spin channels; the alpha and beta densities differ through their occupations.
       do iKS = 1, parallelKS%nLocalKS
         iSpin = parallelKS%localKS(2, iKS)
         eigen(:,1,iSpin) = roks%eigenvalues
         eigVecsReal(:,:,iKS) = roks%coefficients
       end do
-      
     else if (nSpin /= 4) then
       if (tRealHS) then
         call buildAndDiagDenseRealHam(env, denseDesc, ints, species, neighbourList,&
