@@ -65,6 +65,12 @@ module dftbp_io_taggedoutput
     !> excitation energies in Casida formalism
     character(lenLabel) :: excEgy = 'exc_energies_sqr'
 
+    !> ROKS Becke virial integral in Hartree.
+    character(lenLabel) :: roksVirialEnergy = 'roks_virial_energy'
+
+    !> Indices of the open-shell orbitals used for the virial integral.
+    character(lenLabel) :: roksOpenOrbitals = 'roks_open_orbitals'
+
     !> excited state force contributions
     character(lenLabel) :: excForce = 'exc_forces'
 

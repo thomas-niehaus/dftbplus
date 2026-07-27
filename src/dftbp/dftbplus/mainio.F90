@@ -48,6 +48,7 @@ module dftbp_dftbplus_mainio
   use dftbp_md_mdcommon, only : TMDOutput
   use dftbp_md_mdintegrator, only : state, TMdIntegrator
   use dftbp_reks_reks, only : reksTypes, setReksTargetEnergy, TReksCalc
+  use dftbp_roks_roks, only : TRoksCalc
   use dftbp_solvation_cm5, only : TChargeModel5
   use dftbp_solvation_cosmo, only : TCosmo
   use dftbp_solvation_fieldscaling, only : TScaleExtEField
@@ -2040,7 +2041,7 @@ contains
   subroutine writeResultsTag(fileName, energy, derivs, chrgForces, nEl, Ef, eigen, filling,&
       & electronicSolver, tStress, totalStress, pDynMatrix, pBornMatrix, tPeriodic, cellVol,&
       & tMulliken, qOutput, q0, taggedWriter, cm5Cont, polarisability, dEidE, dqOut, neFermi,&
-      & dEfdE, dipoleMoment, multipole, eFieldScaling, reks)
+      & dEfdE, dipoleMoment, multipole, eFieldScaling, reks, roks)
 
     !> Name of output file
     character(len=*), intent(in) :: fileName
@@ -2129,13 +2130,25 @@ contains
     !> Data type for REKS
     type(TReksCalc), allocatable, intent(inout) :: reks
 
+    !> Data type for ROKS and its virial-model result.
+    type(TRoksCalc), allocatable, intent(in) :: roks
+
     real(dp), allocatable :: qOutputUpDown(:,:,:), qDiff(:,:,:)
     type(TFileDescr) :: fd
+    integer :: roksOpenOrbitals(2)
 
     call openFile(fd, fileName, mode="a")
 
     if (allocated(reks)) then
       call taggedWriter%write(fd%unit, tagLabels%egyAvg, energy%Eavg)
+    end if
+    if (allocated(roks)) then
+      if (roks%virialIntegralAvailable) then
+        roksOpenOrbitals = [roks%Nc + 1, roks%Nc + 2]
+        ! Canonical internal value in Hartree.
+        call taggedWriter%write(fd%unit, tagLabels%roksVirialEnergy, roks%virialIntegral)
+        call taggedWriter%write(fd%unit, tagLabels%roksOpenOrbitals, roksOpenOrbitals)
+      end if
     end if
     if (electronicSolver%elecChemPotAvailable) then
       call taggedWriter%write(fd%unit, tagLabels%fermiLvl, Ef)

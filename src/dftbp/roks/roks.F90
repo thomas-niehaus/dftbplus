@@ -71,6 +71,18 @@ module dftbp_roks_roks
 
     !> Eigenvalues of the effective ROKS Hamiltonian.
     real(dp), allocatable :: eigenvalues(:)
+    
+    !> Atomic transition charges between the two open-shell orbitals.
+    real(dp), allocatable :: virialTransitionCharges(:)
+
+    !> Becke virial two-electron integral in Hartree.
+    real(dp) :: virialIntegral = 0.0_dp
+    
+    !> Sum of the atomic transition charges.
+    real(dp) :: virialTransitionChargeSum = 0.0_dp
+
+    !> Whether the integral has been evaluated for the current geometry.
+    logical :: virialIntegralAvailable = .false.
 
   contains
 

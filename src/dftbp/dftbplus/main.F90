@@ -110,6 +110,7 @@ module dftbp_dftbplus_main
       & printreksmicrostates, printrekssainfo, printsareksenergy, qm2udl, qmexpandl, TReksCalc,&
       & ud2qml
   use dftbp_roks_roks, only : TRoksCalc
+  use dftbp_roks_roksvirial, only : calculateRoksVirialIntegral
   use dftbp_solvation_cm5, only : TChargeModel5
   use dftbp_solvation_fieldscaling, only : TScaleExtEField
   use dftbp_solvation_solvation, only : TSolvation
@@ -603,7 +604,7 @@ contains
           & this%tStress, this%totalStress, pDynMatrix, pDipDerivMatrix, this%tPeriodic,&
           & this%cellVol, this%tMulliken, this%qOutput, this%q0, this%taggedWriter, this%cm5Cont,&
           & this%polarisability, this%dEidE, this%dqOut, this%neFermi, this%dEfdE,&
-          & this%dipoleMoment, this%multipoleOut, this%eFieldScaling, this%reks)
+          & this%dipoleMoment, this%multipoleOut, this%eFieldScaling, this%reks, this%roks)
     end if
     if (this%tWriteCosmoFile .and. allocated(this%solvation)) then
       call writeCosmoFile(this%solvation, this%species0, this%speciesName, this%coord0, &
@@ -1706,6 +1707,11 @@ contains
 
     call env%globalTimer%startTimer(globalTimers%postSCC)
 
+    if (allocated(this%roks)) then
+      call calculateRoksVirialIntegral(this%roks, this%denseDesc, this%scc, &
+          & this%neighbourList%iNeighbour, this%img2CentCell)
+    end if
+    
     if (this%isLinResp) then
       call env%globalTimer%startTimer(globalTimers%lrExcitation)
       call calculateLinRespExcitations(env, this%linearResponse, this%parallelKS, this%scc,&
