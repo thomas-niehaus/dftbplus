@@ -1870,7 +1870,7 @@ contains
   subroutine writeAutotestTag(fileName, electronicSolver, tPeriodic, cellVol, tMulliken, qOutput,&
       & derivs, chrgForces, excitedDerivs, tStress, totalStress, pDynMatrix, energy, pressure,&
       & endCoords, tLocalise, localisation, esp, taggedWriter, tunneling, ldos, lCurrArray,&
-      & polarisability, dEidE, dipoleMoment, eFieldScaling)
+      & polarisability, dEidE, dipoleMoment, eFieldScaling, roks)
 
     !> Name of output file
     character(*), intent(in) :: fileName
@@ -1950,6 +1950,9 @@ contains
 
     !> Any dielectric environment scaling
     class(TScaleExtEField), intent(in) :: eFieldScaling
+    
+    !> ROKS calculation data
+    type(TRoksCalc), allocatable, intent(in) :: roks
 
     type(TFileDescr) :: fd
     real(dp), allocatable :: qOutputUpDown(:,:,:)
@@ -2031,6 +2034,12 @@ contains
       call taggedWriter%write(fd%unit, tagLabels%dipoleMoment, dipoleMoment)
       call taggedWriter%write(fd%unit, tagLabels%scaledDipole,&
           & eFieldScaling%scaledSoluteDipole(dipoleMoment))
+    end if
+
+    if (allocated(roks)) then
+      if (allocated(roks%hHubbard)) then
+        call taggedWriter%write(fd%unit, tagLabels%roksVirialEnergy, roks%virialIntegral)
+      end if
     end if
     call closeFile(fd)
 
@@ -2130,26 +2139,24 @@ contains
     !> Data type for REKS
     type(TReksCalc), allocatable, intent(inout) :: reks
 
-    !> Data type for ROKS and its virial-model result.
+    !> Data type for ROKS and its virial-model result
     type(TRoksCalc), allocatable, intent(in) :: roks
 
     real(dp), allocatable :: qOutputUpDown(:,:,:), qDiff(:,:,:)
     type(TFileDescr) :: fd
-    integer :: roksOpenOrbitals(2)
 
     call openFile(fd, fileName, mode="a")
 
     if (allocated(reks)) then
       call taggedWriter%write(fd%unit, tagLabels%egyAvg, energy%Eavg)
     end if
+    
     if (allocated(roks)) then
-      if (roks%virialIntegralAvailable) then
-        roksOpenOrbitals = [roks%Nc + 1, roks%Nc + 2]
-        ! Canonical internal value in Hartree.
+      if (allocated(roks%hHubbard)) then
         call taggedWriter%write(fd%unit, tagLabels%roksVirialEnergy, roks%virialIntegral)
-        call taggedWriter%write(fd%unit, tagLabels%roksOpenOrbitals, roksOpenOrbitals)
       end if
     end if
+
     if (electronicSolver%elecChemPotAvailable) then
       call taggedWriter%write(fd%unit, tagLabels%fermiLvl, Ef)
     end if

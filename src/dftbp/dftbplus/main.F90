@@ -596,7 +596,7 @@ contains
           & this%tStress, this%totalStress, pDynMatrix, this%dftbEnergy(this%deltaDftb%iFinal),&
           & this%extPressure, this%coord0, this%tLocalise, localisation, this%electrostatPot,&
           & this%taggedWriter, this%tunneling, this%ldos, this%lCurrArray, this%polarisability,&
-          & this%dEidE, this%dipoleMoment, this%eFieldScaling)
+          & this%dEidE, this%dipoleMoment, this%eFieldScaling, this%roks)
     end if
     if (this%tWriteResultsTag) then
       call writeResultsTag(resultsTag, this%dftbEnergy(this%deltaDftb%iFinal), this%derivs,&
@@ -1707,11 +1707,14 @@ contains
 
     call env%globalTimer%startTimer(globalTimers%postSCC)
 
+    ! Becke's virial method for excited states based on ROKS
     if (allocated(this%roks)) then
-      call calculateRoksVirialIntegral(this%roks, this%denseDesc, this%scc, &
-          & this%neighbourList%iNeighbour, this%img2CentCell)
+      if (allocated(this%roks%hHubbard)) then
+        call calculateRoksVirialIntegral(this%roks, this%denseDesc, this%scc, this%species0,&
+            & this%neighbourList%iNeighbour, this%img2CentCell)
+      end if
     end if
-    
+
     if (this%isLinResp) then
       call env%globalTimer%startTimer(globalTimers%lrExcitation)
       call calculateLinRespExcitations(env, this%linearResponse, this%parallelKS, this%scc,&
@@ -3296,7 +3299,7 @@ contains
 
   end subroutine getDensityFromDenseDiag
   
-  !> Expand the two sparse spin Hamiltonians required by ROKS.
+  !> Expand the two sparse spin Hamiltonians required by ROKS
   subroutine buildDenseRoksHamiltonians(env, denseDesc, ints, neighbourList, nNeighbourSK,&
       & iSparseStart, img2CentCell, roks, overlap, hybridXc, deltaRhoIn, parallelKS, nNeighbourCam,&
       & orb, tPeriodic, errStatus)
@@ -3325,28 +3328,28 @@ contains
     !> ROKS calculation data
     type(TRoksCalc), intent(inout) :: roks
 
-    !> Dense overlap matrix.
+    !> Dense overlap matrix
     real(dp), intent(out) :: overlap(:,:)
 
-    !> Long-range-corrected or hybrid functional data.
+    !> Long-range-corrected or hybrid functional data
     class(THybridXcFunc), allocatable, intent(inout) :: hybridXc
 
-    !> Input density-matrix changes for the local KS channels.
+    !> Input density-matrix changes for the local KS channels
     real(dp), allocatable, intent(in) :: deltaRhoIn(:,:,:)
 
-    !> Distribution and spin labels of the local KS channels.
+    !> Distribution and spin labels of the local KS channels
     type(TParallelKS), intent(in) :: parallelKS
 
-    !> Number of neighbors used to construct CAM exchange.
+    !> Number of neighbors used to construct CAM exchange
     integer, allocatable, intent(in) :: nNeighbourCam(:)
 
-    !> Atomic orbital information.
+    !> Atomic orbital information
     type(TOrbitals), intent(in) :: orb
 
-    !> Whether periodic boundary conditions are active.
+    !> Whether periodic boundary conditions are active
     logical, intent(in) :: tPeriodic
 
-    !> Status of operation.
+    !> Status of operation
     type(TStatus), intent(inout) :: errStatus
 
     integer :: iKS, iSpin
@@ -3386,8 +3389,7 @@ contains
 
     call env%globalTimer%stopTimer(globalTimers%sparseToDense)
 
-    ! Add the long-range exchange contribution separately to the
-    ! conventional alpha and beta Hamiltonians.
+    ! Add the long-range exchange contribution separately to both spin Hamiltonians
     if (allocated(hybridXc)) then
       do iKS = 1, parallelKS%nLocalKS
         iSpin = parallelKS%localKS(2, iKS)

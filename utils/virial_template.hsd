@@ -1,0 +1,68 @@
+# Example template for utils/virial_s1.py.
+#
+# Directory layout expected by this example:
+#
+#   calculation/
+#   |-- geo.gen
+#   |-- virial_template.hsd
+#   |-- ground/                 (created by virial_s1.py)
+#   `-- triplet/                (created by virial_s1.py)
+#
+# The generated inputs are executed from ground/ and triplet/. Therefore the
+# geometry below is read from the parent directory. Change the Slater-Koster
+# Prefix to the absolute path of your parameter set before running.
+
+Geometry = GenFormat {
+    <<< ../geo.gen
+}
+
+Hamiltonian = DFTB {
+    SCC = Yes
+    SCCTolerance = 1.0e-8
+    MaxSCCIterations = 200
+
+    MaxAngularMomentum = {
+        H = "s"
+        C = "p"
+    }
+
+    SlaterKosterFiles = Type2FileNames {
+        Prefix = "/absolute/path/to/mio-0-1/"
+        Separator = "-"
+        Suffix = ".skf"
+        LowerCaseTypeName = No
+    }
+
+    # The driver replaces this line with:
+    #
+    #   ground: Roks = No
+    #
+    #   triplet: Roks = Yes, the ROKS convergence settings,
+    #            RoksVirial.HHubbard, and SpinPolarisation.
+    @STATE_SETTINGS@
+
+    # Spin constants are needed only by the spin-polarised ROKS calculation.
+    # The driver removes this complete marked block from the ground input.
+    @TRIPLET_ONLY_BEGIN@
+    SpinConstants = {
+        C = {
+            -0.04559 -0.02930
+            -0.02930 -0.02755
+        }
+        H = {
+            -0.07925
+        }
+        ShellResolvedSpin = Yes
+    }
+    @TRIPLET_ONLY_END@
+}
+
+Options = {
+    # Required: the driver reads energies and the virial integral from this
+    # file after each calculation.
+    WriteResultsTag = Yes
+}
+
+ParserOptions = {
+    ParserVersion = 14
+}

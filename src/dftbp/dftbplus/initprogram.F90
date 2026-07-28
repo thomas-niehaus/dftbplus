@@ -1378,7 +1378,7 @@ contains
 
     else if (input%ctrl%roksInp%enabled) then
       ! ROKS builds separate alpha and beta Hamiltonians, although the final
-      ! effective ROKS Hamiltonian will be diagonalized only once.
+      ! effective ROKS Hamiltonian has half that dimension.
 
       if (.not. input%ctrl%tSCC) then
         call error("ROKS requires SCC = Yes")
@@ -1776,8 +1776,10 @@ contains
     if (allocated(this%roks)) then
       call this%roks%init(this%nEl, this%orb%nOrb, input%ctrl%roksInp%maxIterations,&
           & input%ctrl%roksInp%tolerance, input%ctrl%roksInp%writeDiagnostics)
-      write(stdOut, "(A,I0,A,I0,A,I0)") "--> ROKS: core/open/virtual orbitals = ",&
-          & this%roks%Nc, " / ", this%roks%No, " / ", this%roks%Nv
+
+      if (allocated(input%ctrl%roksInp%hHubbard)) then
+        this%roks%hHubbard = input%ctrl%roksInp%hHubbard
+      end if
     end if
 
     call initElectronFilling_(input, this%nSpin, this%Ef, this%iDistribFn, this%tempElec,&
@@ -3151,10 +3153,6 @@ contains
 
     if (allocated(this%roks)) then
       call this%roks%allocateMatrices(nLocalRows, nLocalCols)
-      if (this%roks%writeDiagnostics) then
-        write(stdOut, "(A,I0,A,I0)") "--> ROKS: matrix dimensions = ", &
-            & nLocalRows, " x ", nLocalCols
-      end if
     end if
 
   #:if WITH_TRANSPORT
@@ -3526,7 +3524,19 @@ contains
         end select
       end if
     end if
+    
+    if (allocated(this%roks)) then
+      write(stdOut, "(A,':',T30,I0,A,I0,A,I0,A)") "ROKS orbital partition",&
+          & this%roks%Nc, " core / ", this%roks%No, " open / ",&
+          & this%roks%Nv, " virtual"
 
+      if (allocated(this%roks%hHubbard)) then
+        write(stdOut, "(A,':',T30,A)") "ROKS virial correction", "Pure Hartree"
+      else
+        write(stdOut, "(A,':',T30,A)") "ROKS virial correction", "No"
+      end if
+    end if
+    
     if (this%tPeriodic) then
       write(stdOut, "(A,':',T30,A)") "Periodic boundaries", "Yes"
       if (this%tLatOpt) then

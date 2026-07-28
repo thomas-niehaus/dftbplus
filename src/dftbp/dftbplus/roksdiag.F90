@@ -8,7 +8,7 @@
 #:include 'common.fypp'
 #:include 'error.fypp'
 
-!> Dense diagonalization driver for restricted-open-shell calculations.
+!> Dense diagonalization driver for restricted-open-shell calculations
 module dftbp_dftbplus_roksdiag
 
   use dftbp_common_accuracy, only : dp
@@ -32,7 +32,7 @@ module dftbp_dftbplus_roksdiag
 
 contains
 
-!> Converge and diagonalize the dense effective ROKS Hamiltonian.
+!> Converge and diagonalize the dense effective ROKS Hamiltonian
 !>
 !> The spin-averaged Hamiltonian provides preliminary common orbitals.
 !> At fixed alpha and beta Hamiltonians, the effective ROKS Hamiltonian
@@ -41,25 +41,25 @@ contains
 subroutine diagDenseRoksHamiltonian(env, denseDesc, electronicSolver, &
     roks, hamiltonian, overlap, errStatus)
 
-  !> Execution environment.
+  !> Execution environment
   type(TEnvironment), intent(inout) :: env
 
-  !> Dense matrix distribution descriptor.
+  !> Dense matrix distribution descriptor
   type(TDenseDescr), intent(in) :: denseDesc
 
   !> Electronic eigensolver.
   type(TElectronicSolver), intent(inout) :: electronicSolver
 
-  !> ROKS matrices, orbitals and diagnostics settings.
+  !> ROKS matrices, orbitals and diagnostics settings
   type(TRoksCalc), intent(inout) :: roks
 
-  !> Dense Hamiltonian work array.
+  !> Dense Hamiltonian work array
   real(dp), intent(inout) :: hamiltonian(:,:)
 
-  !> Dense overlap work array.
+  !> Dense overlap work array
   real(dp), intent(inout) :: overlap(:,:)
 
-  !> Error status returned by the eigensolver.
+  !> Error status returned by the eigensolver
   type(TStatus), intent(out) :: errStatus
 
   real(dp) :: roksStationarityResidual
@@ -93,7 +93,7 @@ subroutine diagDenseRoksHamiltonian(env, denseDesc, electronicSolver, &
     call roks%transformHamiltoniansToMo()
     call roks%buildEffectiveHamiltonian()
 
-    ! Diagonalize the current effective ROKS Hamiltonian.
+    ! Diagonalize the current effective ROKS Hamiltonian
     hamiltonian(:,:) = roks%hamEffective(:,:)
     overlap(:,:) = roks%overlap(:,:)
 
@@ -105,7 +105,7 @@ subroutine diagDenseRoksHamiltonian(env, denseDesc, electronicSolver, &
     call diagDenseMtx(env, electronicSolver, 'V', hamiltonian, overlap, roks%eigenvalues, errStatus)
     @:PROPAGATE_ERROR(errStatus)
       
-    ! The serial solver returns eigenvectors in the Hamiltonian array.
+    ! The serial solver returns eigenvectors in the Hamiltonian array
     roks%coefficients(:,:) = hamiltonian(:,:)
 #:endif
 

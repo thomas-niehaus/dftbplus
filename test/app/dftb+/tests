@@ -1,3 +1,4 @@
+
 #! This file will be preprocessed using the same preprocessor options as used
 #! for the compilation and additionally setting MPI_PROCS equal to the make variable
 #! $(TEST_MPI_PROCS) and OMP_THREADS to $(TEST_OMP_THREADS).
@@ -185,6 +186,7 @@ hybrid/periodic/GaAs-kpts-neigh-mic-mpi               #? MPI_PROCS == 2
 
 roks/C2H4                             #? not WITH_MPI
 roks/C2H4_lc                          #? not WITH_MPI
+roks/C2H4_virial                      #? not WITH_MPI
 
 reks/C2H4_3SSR_rangesep                #? not WITH_MPI
 reks/C2H4_direct                       #? not WITH_MPI

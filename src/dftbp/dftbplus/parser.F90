@@ -220,7 +220,7 @@ contains
       call error(errStatus%message)
     end if
 
-    ! ROKS and REKS are mutually exclusive.
+    ! ROKS and REKS are mutually exclusive
     if (input%ctrl%roksInp%enabled .and. input%ctrl%reksInp%reksAlg /= reksTypes%noReks) then
       call detailedError(hamNode, "ROKS and REKS cannot be used simultaneously")
     end if
@@ -1363,6 +1363,24 @@ contains
     end if
     if (ctrl%roksInp%tolerance <= 0.0_dp) then
       call detailedError(node, "RoksTolerance must be positive")
+    end if
+    ! Optional pure-Hartree kernel for the Becke virial integral
+    call getChild(node, "RoksVirial", child, requested=.false.)
+    if (associated(child)) then
+      if (.not. ctrl%roksInp%enabled) then
+        call detailedError(child, "RoksVirial requires ROKS = Yes")
+      end if
+      if (.not. ctrl%tSCC) then
+        call detailedError(child, "RoksVirial requires SCC = Yes")
+      end if
+
+      call getChildValue(child, "HHubbard", value1, child=child2)
+      allocate(ctrl%roksInp%hHubbard(geo%nSpecies))
+      call readSpeciesList(child2, geo%speciesNames, ctrl%roksInp%hHubbard)
+
+      if (any(ctrl%roksInp%hHubbard <= 0.0_dp)) then
+        call detailedError(child2, "RoksVirial HHubbard values must be positive")
+      end if
     end if
 
     call parseHybridBlock(node, ctrl%hybridXcInp, ctrl, geo, skFiles)

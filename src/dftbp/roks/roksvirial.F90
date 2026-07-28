@@ -15,35 +15,46 @@ module dftbp_roks_roksvirial
   public :: calculateRoksVirialIntegral
 
 contains
+  !> Calculate the Becke virial integral between the two ROKS open orbitals
+  !>
+  !> Atomic Mulliken transition charges q_A^{ia} are constructed from the
+  !> open-orbital coefficients and overlap matrix. The integral is approximated as
+  !>
+  !>   K_ia = sum_AB q_A^{ia} gamma_AB q_B^{ia}
+  !>
+  !> where gamma_AB is built with the Hartree-only Hubbard parameters
+  subroutine calculateRoksVirialIntegral(roks, denseDesc, sccCalc, species, iNeighbour,& 
+    & img2CentCell)
 
-  subroutine calculateRoksVirialIntegral(roks, denseDesc, sccCalc, &
-      & iNeighbour, img2CentCell)
-    
+    !> ROKS orbitals and resulting virial integral
     type(TRoksCalc), intent(inout) :: roks
+
+    !> Dense AO-to-atom indexing information
     type(TDenseDescr), intent(in) :: denseDesc
+
+    !> SCC data used to construct the atomic gamma matrix
     type(TScc), intent(in) :: sccCalc
+
+    !> Chemical species index of each central-cell atom
+    integer, intent(in) :: species(:)
+
+    !> Neighbour-list indices used to construct gamma
     integer, intent(in) :: iNeighbour(0:,:)
+
+    !> Mapping from periodic images to central-cell atoms
     integer, intent(in) :: img2CentCell(:)
 
     integer :: iOrb, fOrb, nOrb, nAtom
     integer :: iAtom, iFirst, iLast
-    real(dp) :: orbitalOverlap
+    real(dp) :: transitionChargeSum
     real(dp), allocatable :: overlapTimesCoefficients(:,:)
     real(dp), allocatable :: qOrb(:)
+    real(dp), allocatable :: qAtom(:)
     real(dp), allocatable :: gammaMatrix(:,:)
     real(dp), allocatable :: gammaTimesQ(:)
 
-    roks%virialIntegral = 0.0_dp
-    roks%virialTransitionChargeSum = 0.0_dp
-    roks%virialIntegralAvailable = .false.
-
-    if (allocated(roks%virialTransitionCharges)) then
-      deallocate(roks%virialTransitionCharges)
-    end if
-
     if (roks%No /= 2) then
-      call warning("Becke virial integral currently requires exactly two open-shell orbitals")
-      return
+      call error("RoksVirial requires exactly two open-shell orbitals")
     end if
 
     iOrb = roks%Nc + 1
@@ -59,42 +70,32 @@ contains
         & + roks%coefficients(:,fOrb) * overlapTimesCoefficients(:,iOrb))
 
     nAtom = size(denseDesc%iAtomStart) - 1
-    allocate(roks%virialTransitionCharges(nAtom))
+    allocate(qAtom(nAtom))
 
     do iAtom = 1, nAtom
       iFirst = denseDesc%iAtomStart(iAtom)
       iLast = denseDesc%iAtomStart(iAtom + 1) - 1
-      roks%virialTransitionCharges(iAtom) = sum(qOrb(iFirst:iLast))
+      qAtom(iAtom) = sum(qOrb(iFirst:iLast))
     end do
 
-    roks%virialTransitionChargeSum = sum(roks%virialTransitionCharges)
-    orbitalOverlap = dot_product(roks%coefficients(:,iOrb), overlapTimesCoefficients(:,fOrb))
-
-    if (abs(roks%virialTransitionChargeSum - orbitalOverlap) > 1.0e-10_dp) then
-      call warning("Inconsistent ROKS transition-charge sum")
+    transitionChargeSum = sum(qAtom)
+    if (abs(transitionChargeSum) > 1.0e-8_dp) then
+      call error("ROKS virial transition charges do not sum to zero.")
     end if
 
-    if (abs(roks%virialTransitionChargeSum) > 1.0e-8_dp) then
-      call warning("ROKS virial transition charges are not neutral")
-    end if
-
-    allocate(gammaMatrix(nAtom,nAtom))
-    call sccCalc%getAtomicGammaMatrix(gammaMatrix, iNeighbour, img2CentCell)
+    allocate(gammaMatrix(nAtom, nAtom))
+    call sccCalc%getAtomicGammaMatU(gammaMatrix, roks%hHubbard, species, iNeighbour, img2CentCell)
 
     allocate(gammaTimesQ(nAtom))
-    call hemv(gammaTimesQ, gammaMatrix, roks%virialTransitionCharges)
+    call hemv(gammaTimesQ, gammaMatrix, qAtom)
 
-    roks%virialIntegral = dot_product(roks%virialTransitionCharges, gammaTimesQ)
-
-    roks%virialIntegralAvailable = .true.
+    roks%virialIntegral = dot_product(qAtom, gammaTimesQ)
 
     if (roks%writeDiagnostics) then
       write(stdOut, "(A,2(1X,I0))") "--> ROKS virial transition orbitals:", iOrb, fOrb
-
-      write(stdOut, "(A,1X,ES20.12)") "--> ROKS virial transition-charge sum:", &
-          & roks%virialTransitionChargeSum
-      
-      write(stdOut, "(A,1X,ES20.12,A)") "--> ROKS virial integral:", &
+      write(stdOut, "(A,1X,ES20.12)") "--> ROKS virial transition-charge sum:",&
+          & transitionChargeSum
+      write(stdOut, "(A,1X,ES20.12,A)") "--> ROKS virial integral:",&
           & roks%virialIntegral * Hartree__eV, " eV"
     end if
     
