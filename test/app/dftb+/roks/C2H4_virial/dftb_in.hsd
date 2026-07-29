@@ -9,7 +9,7 @@ Hamiltonian = DFTB {
         H = "s"
         C = "p"
     }
-    
+
     Roks = Yes
     RoksMaxIterations = 50
     RoksTolerance = 1.0e-8
@@ -19,7 +19,7 @@ Hamiltonian = DFTB {
             C = 0.49748
         }
     }
-    
+
     SlaterKosterFiles = Type2FileNames {
     	Prefix = "slakos/origin/mio-1-1/"
     	Separator = "-"
@@ -29,7 +29,7 @@ Hamiltonian = DFTB {
     SpinPolarisation = Colinear {
         UnpairedElectrons = 2
     }
-    SpinConstants = { 
+    SpinConstants = {
         C = {
 	    -0.04559 -0.02930
             -0.02930 -0.02755

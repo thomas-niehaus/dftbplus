@@ -1403,7 +1403,7 @@ contains
       if (input%ctrl%tSpinOrbit) then
         call error("ROKS does not support spin-orbit coupling")
       end if
-      
+
       allocate(this%roks)
       this%nSpin = 2
 
@@ -2056,7 +2056,7 @@ contains
     this%tPrintEigVecsTxt = input%ctrl%tPrintEigVecsTxt
 
     this%tPrintForces = input%ctrl%tPrintForces
-    this%tForces = input%ctrl%tForces .or. this%tPrintForces 
+    this%tForces = input%ctrl%tForces .or. this%tPrintForces
     if (this%isLinResp) then
       this%tForces = this%tForces .or. input%ctrl%lrespini%tNaCoupling
       allocate(this%linearResponse)
@@ -3132,9 +3132,9 @@ contains
         call error("ROKS currently requires one processor group")
       end if
 #:endif
-      
+
     end if
-    
+
     if (allocated(this%reks)) then
       call checkReksConsistency(input%ctrl%reksInp, this%solvation, this%onSiteElements,&
           & this%kPoint, this%nEl, this%nKPoint, this%tSccCalc, this%tSpin, this%tSpinOrbit,&
@@ -3524,7 +3524,7 @@ contains
         end select
       end if
     end if
-    
+
     if (allocated(this%roks)) then
       write(stdOut, "(A,':',T30,I0,A,I0,A,I0,A)") "ROKS orbital partition",&
           & this%roks%Nc, " core / ", this%roks%No, " open / ",&
@@ -3536,7 +3536,7 @@ contains
         write(stdOut, "(A,':',T30,A)") "ROKS virial correction", "No"
       end if
     end if
-    
+
     if (this%tPeriodic) then
       write(stdOut, "(A,':',T30,A)") "Periodic boundaries", "Yes"
       if (this%tLatOpt) then
@@ -5451,9 +5451,9 @@ contains
 
       if (this%isLinResp) then
         ! For NA coupling store gradient for several states,
-        ! otherwise store excited state gradient for state of interest only     
+        ! otherwise store excited state gradient for state of interest only
         if (this%linearResponse%tNaCoupling) then
-        
+
           dLev = this%linearResponse%indNACouplings(2) - this%linearResponse%indNACouplings(1) + 1
           allocate(this%naCouplings(3, this%nAtom, dLev*(dLev-1)/2))
           if (this%linearResponse%indNACouplings(1) == 0) then
@@ -5461,11 +5461,11 @@ contains
           else
             allocate(this%excitedDerivs(3, this%nAtom, dLev))
           end if
-        
+
         else if (this%tLinRespZVect .and. this%tCasidaForces) then
           allocate(this%excitedDerivs(3, this%nAtom, 1))
         end if
-        
+
         if(this%linearResponse%isCIopt) then
           if (.not. this%linearResponse%tNaCoupling) then
             call error("Optimization of CI requires StateCouplings keyword.")

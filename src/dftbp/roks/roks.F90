@@ -63,7 +63,7 @@ module dftbp_roks_roks
 
     !> Effective ROKS Hamiltonian
     real(dp), allocatable :: hamEffective(:,:)
-    
+
     !> Original AO overlap matrix
     real(dp), allocatable :: overlap(:,:)
 
@@ -75,10 +75,10 @@ module dftbp_roks_roks
 
     !> Eigenvalues of the effective ROKS Hamiltonian
     real(dp), allocatable :: eigenvalues(:)
-    
+
     !> Becke virial two-electron integral in a.u.
     real(dp) :: virialIntegral = 0.0_dp
-    
+
   contains
 
     !> Initialize the core, open-shell and virtual orbital counts
@@ -130,7 +130,7 @@ contains
 
     !> Whether internal ROKS diagnostics should be printed
     logical, intent(in) :: writeDiagnostics
-    
+
     this%maxIterations = maxIterations
     this%tolerance = tolerance
     this%writeDiagnostics = writeDiagnostics
@@ -210,7 +210,7 @@ contains
     this%hamEffective(:,:) = 0.5_dp * (this%hamAlpha(:,:) + this%hamBeta(:,:))
 
   end subroutine TRoksCalc_buildInitialHamiltonian
-  
+
   !> Transform alpha and beta Hamiltonians from the AO basis to the shared orthonormal ROKS MO basis
   subroutine TRoksCalc_transformHamiltoniansToMo(this)
 
@@ -228,7 +228,7 @@ contains
   !> Hamiltonian. Couplings between doubly and singly occupied orbitals
   !> are taken from the beta Hamiltonian, while couplings between singly
   !> occupied and empty orbitals are taken from the alpha Hamiltonian.
-  !> 
+  !>
   !> A related common-orbital construction is used by the PySCF
   !> restricted-open-shell implementation; see pyscf.scf.rohf.
   subroutine TRoksCalc_applyMoCouplings(this)

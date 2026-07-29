@@ -23,7 +23,7 @@ contains
   !>   K_ia = sum_AB q_A^{ia} gamma_AB q_B^{ia}
   !>
   !> where gamma_AB is built with the Hartree-only Hubbard parameters
-  subroutine calculateRoksVirialIntegral(roks, denseDesc, sccCalc, species, iNeighbour,& 
+  subroutine calculateRoksVirialIntegral(roks, denseDesc, sccCalc, species, iNeighbour,&
     & img2CentCell)
 
     !> ROKS orbitals and resulting virial integral
@@ -98,7 +98,7 @@ contains
       write(stdOut, "(A,1X,ES20.12,A)") "--> ROKS virial integral:",&
           & roks%virialIntegral * Hartree__eV, " eV"
     end if
-    
+
   end subroutine calculateRoksVirialIntegral
 
 end module dftbp_roks_roksvirial
