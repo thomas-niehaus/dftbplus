@@ -1364,6 +1364,10 @@ contains
     if (ctrl%roksInp%tolerance <= 0.0_dp) then
       call detailedError(node, "RoksTolerance must be positive")
     end if
+    call getChildValue(node, "RoksDamping", ctrl%roksInp%damping, 1.0_dp)
+    if (ctrl%roksInp%damping <= 0.0_dp .or. ctrl%roksInp%damping > 1.0_dp) then
+      call detailedError(node, "RoksDamping must be in the interval (0, 1]")
+    end if
     ! Optional pure-Hartree kernel for the Becke virial integral
     call getChild(node, "RoksVirial", child, requested=.false.)
     if (associated(child)) then

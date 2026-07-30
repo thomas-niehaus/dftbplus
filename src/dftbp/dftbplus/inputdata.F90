@@ -160,7 +160,10 @@ module dftbp_dftbplus_inputdata
 
     !> Species-resolved Hubbard-like parameters containing only Hartree kernel
     real(dp), allocatable :: hHubbard(:)
-    
+
+    !> Damping of the inner loop.
+    real(dp) :: damping = 1.0_dp
+
   end type TRoksInp
 
 

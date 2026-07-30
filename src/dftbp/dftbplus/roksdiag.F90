@@ -38,8 +38,8 @@ contains
 !> At fixed alpha and beta Hamiltonians, the effective ROKS Hamiltonian
 !> is then rebuilt and diagonalized until the independent orbital-space
 !> couplings satisfy the stationarity tolerance.
-subroutine diagDenseRoksHamiltonian(env, denseDesc, electronicSolver, &
-    roks, hamiltonian, overlap, errStatus)
+subroutine diagDenseRoksHamiltonian(env, denseDesc, electronicSolver, iScc, roks,&
+    & hamiltonian, overlap, errStatus)
 
   !> Execution environment
   type(TEnvironment), intent(inout) :: env
@@ -49,6 +49,9 @@ subroutine diagDenseRoksHamiltonian(env, denseDesc, electronicSolver, &
 
   !> Electronic eigensolver.
   type(TElectronicSolver), intent(inout) :: electronicSolver
+
+  !> Outer SCC iteration counter.
+  integer, intent(in) :: iScc
 
   !> ROKS matrices, orbitals and diagnostics settings
   type(TRoksCalc), intent(inout) :: roks
@@ -62,29 +65,42 @@ subroutine diagDenseRoksHamiltonian(env, denseDesc, electronicSolver, &
   !> Error status returned by the eigensolver
   type(TStatus), intent(out) :: errStatus
 
+  real(dp), allocatable :: previousHamiltonian(:,:)
   real(dp) :: roksStationarityResidual
   integer :: iRoks
   logical :: roksConverged
 
-  ! Obtain preliminary common orbitals. These orbitals define the
-  ! core, open-shell and virtual subspaces in which the spin-dependent
-  ! effective Hamiltonian is assembled.
-  hamiltonian(:,:) = roks%hamEffective(:,:)
-  overlap(:,:) = roks%overlap(:,:)
+  @:ASSERT(iScc > 0)
+
+  if (iScc == 1) then
+    if (roks%writeDiagnostics) then
+      write(stdOut, "(A)") "--> ROKS: initializing orbitals from spin-averaged Hamiltonian"
+    end if
+    ! Obtain preliminary common orbitals. These orbitals define the
+    ! core, open-shell and virtual subspaces in which the spin-dependent
+    ! effective Hamiltonian is assembled.
+    hamiltonian(:,:) = roks%hamEffective(:,:)
+    overlap(:,:) = roks%overlap(:,:)
 
 #:if WITH_SCALAPACK
-  call diagDenseMtxBlacs(electronicSolver, 1, 'V', denseDesc%blacsOrbSqr, hamiltonian,&
-      & overlap, roks%eigenvalues, roks%coefficients, errStatus)
-  @:PROPAGATE_ERROR(errStatus)
+    call diagDenseMtxBlacs(electronicSolver, 1, 'V', denseDesc%blacsOrbSqr, hamiltonian,&
+        & overlap, roks%eigenvalues, roks%coefficients, errStatus)
+    @:PROPAGATE_ERROR(errStatus)
 #:else
-  call diagDenseMtx(env, electronicSolver, 'V', hamiltonian, overlap, roks%eigenvalues, errStatus)
-  @:PROPAGATE_ERROR(errStatus)
-    
-  roks%coefficients(:,:) = hamiltonian(:,:)
+    call diagDenseMtx(env, electronicSolver, 'V', hamiltonian, overlap, roks%eigenvalues, errStatus)
+    @:PROPAGATE_ERROR(errStatus)
+
+    roks%coefficients(:,:) = hamiltonian(:,:)
 #:endif
+  else
+    if (roks%writeDiagnostics) then
+      write(stdOut, "(A)") "--> ROKS: reusing orbitals from previous SCC iteration"
+    end if
+  end if
 
   roksConverged = .false.
   roksStationarityResidual = huge(1.0_dp)
+  allocate(previousHamiltonian, mold=roks%hamEffective)
 
   do iRoks = 1, roks%maxIterations
 
@@ -92,6 +108,12 @@ subroutine diagDenseRoksHamiltonian(env, denseDesc, electronicSolver, &
     ! orbitals and the fixed alpha and beta Hamiltonians.
     call roks%transformHamiltoniansToMo()
     call roks%buildEffectiveHamiltonian()
+
+    if (iRoks > 1) then
+      roks%hamEffective(:,:) = roks%damping * roks%hamEffective(:,:) &
+          & + (1.0_dp - roks%damping) * previousHamiltonian(:,:)
+    end if
+    previousHamiltonian(:,:) = roks%hamEffective(:,:)
 
     ! Diagonalize the current effective ROKS Hamiltonian
     hamiltonian(:,:) = roks%hamEffective(:,:)

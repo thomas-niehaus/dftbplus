@@ -49,6 +49,9 @@ module dftbp_roks_roks
     !> Convergence tolerance for the orbital-stationarity residual
     real(dp) :: tolerance = 1.0e-8_dp
 
+    !> Weight of the newly constructed effective Hamiltonian.
+    real(dp) :: damping = 1.0_dp
+
     !> Conventional alpha-spin Hamiltonian in the AO basis
     real(dp), allocatable :: hamAlpha(:,:)
 
@@ -111,7 +114,7 @@ contains
   !> The beta population defines the number of doubly occupied core
   !> orbitals. The excess alpha population defines the number of singly
   !> occupied open-shell orbitals. All remaining orbitals are virtual.
-  subroutine TRoksCalc_init(this, nEl, nOrb, maxIterations, tolerance, writeDiagnostics)
+  subroutine TRoksCalc_init(this, nEl, nOrb, maxIterations, tolerance, damping, writeDiagnostics)
 
     !> ROKS calculation data
     class(TRoksCalc), intent(out) :: this
@@ -128,12 +131,16 @@ contains
     !> Convergence tolerance for the orbital-stationarity residual
     real(dp), intent(in) :: tolerance
 
+    !> Damping of the inner ROKS loop.
+    real(dp), intent(in) :: damping
+
     !> Whether internal ROKS diagnostics should be printed
     logical, intent(in) :: writeDiagnostics
 
     this%maxIterations = maxIterations
     this%tolerance = tolerance
     this%writeDiagnostics = writeDiagnostics
+    this%damping = damping
 
     if (size(nEl) /= 2) then
       call error("ROKS requires two spin electron populations")

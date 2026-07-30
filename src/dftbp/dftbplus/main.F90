@@ -2999,7 +2999,7 @@ contains
 
     case(densityMatrixTypes%fromEigenVecs, densityMatrixTypes%magma_fromEigenVecs)
 
-      call getDensityFromDenseDiag(env, denseDesc, ints, neighbourList, symNeighbourList,&
+      call getDensityFromDenseDiag(env, iSCC, denseDesc, ints, neighbourList, symNeighbourList,&
           & nNeighbourSK, iSparseStart, img2CentCell, iCellVec, cellVec, kPoint, kWeight, orb,&
           & tHelical, coord, species, electronicSolver, rCellVecs, latVecs, recVecs2p, tPeriodic,&
           & tRealHS, tSpinSharedEf, tSpinOrbit, tDualSpinOrbit, tFillKSep, tFixEf, tMulliken,&
@@ -3041,7 +3041,7 @@ contains
 
 
   !> Returns the density matrix using dense diagonalisation.
-  subroutine getDensityFromDenseDiag(env, denseDesc, ints, neighbourList, symNeighbourList,&
+  subroutine getDensityFromDenseDiag(env, iScc, denseDesc, ints, neighbourList, symNeighbourList,&
       & nNeighbourSK, iSparseStart, img2CentCell, iCellVec, cellVec, kPoint, kWeight, orb,&
       & tHelical, coord, species, electronicSolver, rCellVecs, latVecs, recVecs2p, tPeriodic,&
       & tRealHS, tSpinSharedEf, tSpinOrbit, tDualSpinOrbit, tFillKSep, tFixEf, tMulliken,&
@@ -3052,6 +3052,9 @@ contains
 
     !> Environment settings
     type(TEnvironment), intent(inout) :: env
+
+    !> Outer SCC iteration counter.
+    integer, intent(in) :: iScc
 
     !> Dense matrix descriptor
     type(TDenseDescr), intent(in) :: denseDesc
@@ -3228,8 +3231,8 @@ contains
           & iSparseStart, img2CentCell, roks, SSqrReal, hybridXc, densityMatrix%deltaRhoIn,&
           & parallelKS, nNeighbourCam, orb, tPeriodic, errStatus)
 @:PROPAGATE_ERROR(errStatus)
-      call diagDenseRoksHamiltonian(env, denseDesc, electronicSolver, roks, HSqrReal, SSqrReal,&
-          & errStatus)
+      call diagDenseRoksHamiltonian(env, denseDesc, electronicSolver, iScc, roks, HSqrReal,&
+          & SSqrReal, errStatus)
       @:PROPAGATE_ERROR(errStatus)
       
       ! ROKS uses one common spatial-orbital set. Store the same eigenvalues and coefficients for
