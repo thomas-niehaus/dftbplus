@@ -1711,7 +1711,7 @@ contains
     if (allocated(this%roks)) then
       if (allocated(this%roks%hHubbard)) then
         call calculateRoksVirialIntegral(this%roks, this%denseDesc, this%scc, this%species0,&
-            & this%neighbourList%iNeighbour, this%img2CentCell)
+            & this%neighbourList%iNeighbour, this%img2CentCell, this%orb)
       end if
     end if
 

@@ -43,6 +43,9 @@ module dftbp_roks_roks
     !> Species-resolved Hubbard-like parameters containing only the Hartree kernel
     real(dp), allocatable :: hHubbard(:)
 
+    !> Onsite kernel parameters used only for the virial integral
+    real(dp), allocatable :: virialOnSiteElements(:,:,:,:)
+
     !> Maximum number of fixed-Hamiltonian orbital iterations
     integer :: maxIterations = 50
 

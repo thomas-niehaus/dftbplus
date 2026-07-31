@@ -1733,10 +1733,12 @@ contains
       end do
     end if
 
-    ! on-site corrections
+    ! On-site corrections
     if (allocated(input%ctrl%onSiteElements)) then
-      allocate(this%onSiteElements(this%orb%mShell, this%orb%mShell, 2, this%nType))
-      this%onSiteElements(:,:,:,:) = input%ctrl%onSiteElements(:,:,:,:)
+      if (.not. (allocated(this%roks) .and. allocated(input%ctrl%roksInp%hHubbard))) then
+        allocate(this%onSiteElements(this%orb%mShell, this%orb%mShell, 2, this%nType))
+        this%onSiteElements(:,:,:,:) = input%ctrl%onSiteElements(:,:,:,:)
+      end if
     end if
 
     this%tMixBlockCharges = allocated(this%dftbU) .or. allocated(this%onSiteElements)
@@ -1779,6 +1781,10 @@ contains
           & input%ctrl%roksInp%writeDiagnostics)
       if (allocated(input%ctrl%roksInp%hHubbard)) then
         this%roks%hHubbard = input%ctrl%roksInp%hHubbard
+      end if
+      if (allocated(input%ctrl%roksInp%hHubbard) .and.&
+          & allocated(input%ctrl%onSiteElements)) then
+        this%roks%virialOnSiteElements = input%ctrl%onSiteElements
       end if
     end if
 
