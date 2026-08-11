@@ -1358,6 +1358,7 @@ contains
     call getChildValue(node, "ROKS", ctrl%roksInp%enabled, .false.)
     call getChildValue(node, "RoksMaxIterations", ctrl%roksInp%maxIterations, 50)
     call getChildValue(node, "RoksTolerance", ctrl%roksInp%tolerance, 1.0e-8_dp)
+    call getChildValue(node, "RoksReadEigenvectors", ctrl%roksInp%readEigenvectors, .false.)
     if (ctrl%roksInp%maxIterations < 1) then
       call detailedError(node, "RoksMaxIterations must be a positive integer")
     end if

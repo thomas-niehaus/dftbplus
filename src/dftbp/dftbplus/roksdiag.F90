@@ -16,6 +16,7 @@ module dftbp_dftbplus_roksdiag
   use dftbp_common_globalenv, only : stdOut
   use dftbp_common_status, only : TStatus
   use dftbp_dftbplus_eigenvects, only : diagDenseMtx
+  use dftbp_dftbplus_mainio, only : readEigenvecs
   use dftbp_elecsolvers_elecsolvers, only : TElectronicSolver
   use dftbp_io_message, only : warning
   use dftbp_roks_roks, only : TRoksCalc
@@ -73,25 +74,32 @@ subroutine diagDenseRoksHamiltonian(env, denseDesc, electronicSolver, iScc, roks
   @:ASSERT(iScc > 0)
 
   if (iScc == 1) then
-    if (roks%writeDiagnostics) then
-      write(stdOut, "(A)") "--> ROKS: initializing orbitals from spin-averaged Hamiltonian"
-    end if
-    ! Obtain preliminary common orbitals. These orbitals define the
-    ! core, open-shell and virtual subspaces in which the spin-dependent
-    ! effective Hamiltonian is assembled.
-    hamiltonian(:,:) = roks%hamEffective(:,:)
-    overlap(:,:) = roks%overlap(:,:)
+    if (roks%readEigenvectors) then
+      if (roks%writeDiagnostics) then
+        write(stdOut, "(A)") "--> ROKS: reading initial orbitals from eigenvec.bin"
+      end if
+      call readEigenvecs(roks%coefficients)
+    else
+      if (roks%writeDiagnostics) then
+        write(stdOut, "(A)") "--> ROKS: initializing orbitals from spin-averaged Hamiltonian"
+      end if
+      ! Obtain preliminary common orbitals. These orbitals define the
+      ! core, open-shell and virtual subspaces in which the spin-dependent
+      ! effective Hamiltonian is assembled.
+      hamiltonian(:,:) = roks%hamEffective(:,:)
+      overlap(:,:) = roks%overlap(:,:)
 
 #:if WITH_SCALAPACK
-    call diagDenseMtxBlacs(electronicSolver, 1, 'V', denseDesc%blacsOrbSqr, hamiltonian,&
-        & overlap, roks%eigenvalues, roks%coefficients, errStatus)
-    @:PROPAGATE_ERROR(errStatus)
+      call diagDenseMtxBlacs(electronicSolver, 1, 'V', denseDesc%blacsOrbSqr, hamiltonian,&
+          & overlap, roks%eigenvalues, roks%coefficients, errStatus)
+      @:PROPAGATE_ERROR(errStatus)
 #:else
-    call diagDenseMtx(env, electronicSolver, 'V', hamiltonian, overlap, roks%eigenvalues, errStatus)
-    @:PROPAGATE_ERROR(errStatus)
+      call diagDenseMtx(env, electronicSolver, 'V', hamiltonian, overlap, roks%eigenvalues, errStatus)
+      @:PROPAGATE_ERROR(errStatus)
 
-    roks%coefficients(:,:) = hamiltonian(:,:)
+      roks%coefficients(:,:) = hamiltonian(:,:)
 #:endif
+    end if
   else
     if (roks%writeDiagnostics) then
       write(stdOut, "(A)") "--> ROKS: reusing orbitals from previous SCC iteration"

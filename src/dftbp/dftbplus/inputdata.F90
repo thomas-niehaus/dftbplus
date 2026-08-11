@@ -158,6 +158,9 @@ module dftbp_dftbplus_inputdata
     !> Whether internal ROKS diagnostics should be printed
     logical :: writeDiagnostics = .false.
 
+    !> Whether initial common orbitals are read from eigenvec.bin
+    logical :: readEigenvectors = .false.
+
     !> Species-resolved Hubbard-like parameters containing only Hartree kernel
     real(dp), allocatable :: hHubbard(:)
 

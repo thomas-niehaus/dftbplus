@@ -40,6 +40,9 @@ module dftbp_roks_roks
     !> Whether internal ROKS diagnostics should be printed
     logical :: writeDiagnostics = .false.
 
+    !> Whether initial common orbitals are read from eigenvec.bin
+    logical :: readEigenvectors = .false.
+
     !> Species-resolved Hubbard-like parameters containing only the Hartree kernel
     real(dp), allocatable :: hHubbard(:)
 
@@ -117,7 +120,8 @@ contains
   !> The beta population defines the number of doubly occupied core
   !> orbitals. The excess alpha population defines the number of singly
   !> occupied open-shell orbitals. All remaining orbitals are virtual.
-  subroutine TRoksCalc_init(this, nEl, nOrb, maxIterations, tolerance, damping, writeDiagnostics)
+  subroutine TRoksCalc_init(this, nEl, nOrb, maxIterations, tolerance, damping, writeDiagnostics,&
+      & readEigenvectors)
 
     !> ROKS calculation data
     class(TRoksCalc), intent(out) :: this
@@ -140,9 +144,13 @@ contains
     !> Whether internal ROKS diagnostics should be printed
     logical, intent(in) :: writeDiagnostics
 
+    !> Whether initial common orbitals are read from eigenvec.bin
+    logical, intent(in) :: readEigenvectors
+
     this%maxIterations = maxIterations
     this%tolerance = tolerance
     this%writeDiagnostics = writeDiagnostics
+    this%readEigenvectors = readEigenvectors
     this%damping = damping
 
     if (size(nEl) /= 2) then
