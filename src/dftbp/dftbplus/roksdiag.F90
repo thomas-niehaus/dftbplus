@@ -68,7 +68,7 @@ subroutine diagDenseRoksHamiltonian(env, denseDesc, electronicSolver, iScc, roks
 
   real(dp), allocatable :: previousHamiltonian(:,:)
   real(dp) :: roksStationarityResidual
-  integer :: iRoks
+  integer :: iRoks, p
   logical :: roksConverged
 
   @:ASSERT(iScc > 0)
@@ -83,9 +83,8 @@ subroutine diagDenseRoksHamiltonian(env, denseDesc, electronicSolver, iScc, roks
       if (roks%writeDiagnostics) then
         write(stdOut, "(A)") "--> ROKS: initializing orbitals from spin-averaged Hamiltonian"
       end if
-      ! Obtain preliminary common orbitals. These orbitals define the
-      ! core, open-shell and virtual subspaces in which the spin-dependent
-      ! effective Hamiltonian is assembled.
+      ! The preliminary common orbitals provide the initial basis for the
+      ! occupation-weighted effective Hamiltonian.
       hamiltonian(:,:) = roks%hamEffective(:,:)
       overlap(:,:) = roks%overlap(:,:)
 
@@ -103,6 +102,15 @@ subroutine diagDenseRoksHamiltonian(env, denseDesc, electronicSolver, iScc, roks
   else
     if (roks%writeDiagnostics) then
       write(stdOut, "(A)") "--> ROKS: reusing orbitals from previous SCC iteration"
+      write(stdOut, "(A)") "--> ROKS: occupations used by inner iteration"
+
+      do p = 1, size(roks%occupations, dim=1)
+        if (abs(roks%occupations(p,1) - nint(roks%occupations(p,1))) > 1.0e-6_dp .or. &
+            abs(roks%occupations(p,2) - nint(roks%occupations(p,2))) > 1.0e-6_dp) then
+          write(stdOut, "(A,I6,2F14.8)") "--> ROKS: orbital occupations ", p, &
+              roks%occupations(p,1), roks%occupations(p,2)
+        end if
+      end do
     end if
   end if
 

@@ -58,6 +58,9 @@ module dftbp_roks_roks
     !> Weight of the newly constructed effective Hamiltonian.
     real(dp) :: damping = 1.0_dp
 
+    !> Alpha and beta occupations used to construct the effective Hamiltonian
+    real(dp), allocatable :: occupations(:,:)
+
     !> Conventional alpha-spin Hamiltonian in the AO basis
     real(dp), allocatable :: hamAlpha(:,:)
 
@@ -105,8 +108,11 @@ module dftbp_roks_roks
     !> Construct the effective ROKS Hamiltonian and transform it to the AO basis
     procedure :: buildEffectiveHamiltonian => TRoksCalc_buildEffectiveHamiltonian
 
-    !> Insert the spin-dependent core-open and open-virtual MO blocks
+    !> Insert occupation-weighted off-diagonal MO couplings
     procedure :: applyMoCouplings => TRoksCalc_applyMoCouplings
+
+    !> Store occupations for the following ROKS inner iteration
+    procedure :: setOccupations => TRoksCalc_setOccupations
 
     !> Return the largest independent ROKS orbital-gradient element
     procedure :: getStationarityResidual => TRoksCalc_getStationarityResidual
@@ -186,6 +192,11 @@ contains
       call error("ROKS has more occupied orbitals than available orbitals")
     end if
 
+    allocate(this%occupations(nOrb, 2), source=0.0_dp)
+
+    this%occupations(1:this%Nc + this%No, 1) = 1.0_dp
+    this%occupations(1:this%Nc, 2) = 1.0_dp
+
   end subroutine TRoksCalc_init
 
 
@@ -217,6 +228,29 @@ contains
 
   end subroutine TRoksCalc_allocateMatrices
 
+  !> Store alpha and beta occupations for the next ROKS orbital optimization
+  subroutine TRoksCalc_setOccupations(this, occupations)
+
+    class(TRoksCalc), intent(inout) :: this
+    real(dp), intent(in) :: occupations(:,:)
+
+    if (size(occupations, dim=1) /= size(this%occupations, dim=1)) then
+      call error("Invalid number of ROKS orbital occupations")
+    end if
+
+    if (size(occupations, dim=2) /= 2) then
+      call error("ROKS requires alpha and beta orbital occupations")
+    end if
+
+    if (any(occupations < -elecTolMax) .or. &
+        any(occupations > 1.0_dp + elecTolMax)) then
+      call error("ROKS occupations must lie between zero and one")
+    end if
+
+    this%occupations(:,:) = occupations(:,:)
+
+  end subroutine TRoksCalc_setOccupations
+
   !> Build an initial common-orbital Hamiltonian from the alpha and beta Hamiltonians
   subroutine TRoksCalc_buildInitialHamiltonian(this)
 
@@ -240,111 +274,94 @@ contains
 
   end subroutine TRoksCalc_transformHamiltoniansToMo
 
-  !> Assemble spin-dependent couplings between the ROKS orbital spaces
+  !> Assemble occupation-weighted couplings between common spatial orbitals
   !>
-  !> The alpha/beta mean defines the common part of the effective
-  !> Hamiltonian. Couplings between doubly and singly occupied orbitals
-  !> are taken from the beta Hamiltonian, while couplings between singly
-  !> occupied and empty orbitals are taken from the alpha Hamiltonian.
+  !> For orbitals p and q, the coupling is constructed from
   !>
+  !>   (f_p_alpha - f_q_alpha) F_alpha_pq
+  !> + (f_p_beta  - f_q_beta)  F_beta_pq.
+  !>
+  !> The scaling recovers the conventional core/open/virtual ROKS
+  !> blocks for integer occupations without amplifying small fractional
+  !> occupation differences.
+  !
   !> A related common-orbital construction is used by the PySCF
   !> restricted-open-shell implementation; see pyscf.scf.rohf.
   subroutine TRoksCalc_applyMoCouplings(this)
 
     class(TRoksCalc), intent(inout) :: this
-    integer :: iCoreFirst, iCoreLast
-    integer :: iOpenFirst, iOpenLast
-    integer :: iVirtualFirst, iVirtualLast
-    integer :: nOrb
+
+    integer :: p, q, nOrb
+    real(dp) :: deltaAlpha, deltaBeta
+    real(dp) :: occupationDifference
+    real(dp) :: coupling
+    real(dp), parameter :: occupationTolerance = 1.0e-10_dp
 
     nOrb = size(this%hamEffectiveMo, dim=1)
 
     @:ASSERT(size(this%hamEffectiveMo, dim=2) == nOrb)
-    @:ASSERT(this%Nc + this%No + this%Nv == nOrb)
+    @:ASSERT(size(this%occupations, dim=1) == nOrb)
+    @:ASSERT(size(this%occupations, dim=2) == 2)
 
-    iCoreFirst = 1
-    iCoreLast = this%Nc
+    do q = 2, nOrb
+      do p = 1, q - 1
 
-    iOpenFirst = this%Nc + 1
-    iOpenLast = this%Nc + this%No
+        deltaAlpha = this%occupations(p,1) - this%occupations(q,1)
+        deltaBeta = this%occupations(p,2) - this%occupations(q,2)
 
-    iVirtualFirst = this%Nc + this%No + 1
-    iVirtualLast = nOrb
+        occupationDifference = abs(deltaAlpha) + abs(deltaBeta)
 
-    ! Core-open block: use the beta-spin Hamiltonian
-    if (this%Nc > 0 .and. this%No > 0) then
-      this%hamEffectiveMo(iCoreFirst:iCoreLast, iOpenFirst:iOpenLast) = &
-          & this%hamBetaMo(iCoreFirst:iCoreLast, iOpenFirst:iOpenLast)
+        if (occupationDifference > occupationTolerance) then
+          coupling = (deltaAlpha * this%hamAlphaMo(p,q) &
+              & + deltaBeta * this%hamBetaMo(p,q)) &
+              & / max(1.0_dp, occupationDifference)
 
-      ! Enforce symmetry explicitly
-      this%hamEffectiveMo(iOpenFirst:iOpenLast, iCoreFirst:iCoreLast) = &
-          & transpose(this%hamEffectiveMo(iCoreFirst:iCoreLast, iOpenFirst:iOpenLast))
-    end if
-
-    ! Open-virtual block: use the alpha-spin Hamiltonian
-    if (this%No > 0 .and. this%Nv > 0) then
-      this%hamEffectiveMo(iOpenFirst:iOpenLast, iVirtualFirst:iVirtualLast) = &
-          & this%hamAlphaMo(iOpenFirst:iOpenLast, iVirtualFirst:iVirtualLast)
-
-      ! Enforce symmetry explicitly
-      this%hamEffectiveMo(iVirtualFirst:iVirtualLast, iOpenFirst:iOpenLast) = &
-          & transpose(this%hamEffectiveMo(iOpenFirst:iOpenLast, iVirtualFirst:iVirtualLast))
-    end if
+          this%hamEffectiveMo(p,q) = coupling
+          this%hamEffectiveMo(q,p) = coupling
+        end if
+      end do
+    end do
 
   end subroutine TRoksCalc_applyMoCouplings
 
-  !> Return the maximum residual coupling between different orbital spaces
+  !> Return the largest independent occupation-weighted coupling
   !>
-  !> At a stationary high-spin restricted-open-shell solution, the
-  !> beta core-open, spin-averaged core-virtual, and alpha open-virtual
-  !> Hamiltonian blocks vanish in the common MO basis.
+  !> Pairs with identical alpha and beta occupations do not contribute,
+  !> since rotations within an equally occupied subspace leave the
+  !> density unchanged.
   function TRoksCalc_getStationarityResidual(this) result(residual)
 
-    !> ROKS calculation data.
     class(TRoksCalc), intent(in) :: this
 
-    !> Largest absolute independent orbital-gradient element
     real(dp) :: residual
-
-    integer :: iCoreFirst, iCoreLast
-    integer :: iOpenFirst, iOpenLast
-    integer :: iVirtualFirst, iVirtualLast
-    integer :: nOrb
+    real(dp) :: deltaAlpha, deltaBeta
+    real(dp) :: occupationDifference
+    real(dp) :: coupling
+    real(dp), parameter :: occupationTolerance = 1.0e-10_dp
+    integer :: p, q, nOrb
 
     nOrb = size(this%hamAlphaMo, dim=1)
-
-    iCoreFirst = 1
-    iCoreLast = this%Nc
-
-    iOpenFirst = this%Nc + 1
-    iOpenLast = this%Nc + this%No
-
-    iVirtualFirst = this%Nc + this%No + 1
-    iVirtualLast = nOrb
-
     residual = 0.0_dp
 
-    ! Core-open rotations are governed by the beta Hamiltonian
-    if (this%Nc > 0 .and. this%No > 0) then
-      residual = max(residual, maxval(abs(this%hamBetaMo(iCoreFirst:iCoreLast,&
-         & iOpenFirst:iOpenLast))))
-    end if
+    do q = 2, nOrb
+      do p = 1, q - 1
 
-    ! Core-virtual rotations are governed by the spin average
-    if (this%Nc > 0 .and. this%Nv > 0) then
-      residual = max(residual, maxval(abs(0.5_dp * (this%hamAlphaMo(iCoreFirst:iCoreLast, &
-         & iVirtualFirst:iVirtualLast) + this%hamBetaMo(iCoreFirst:iCoreLast, &
-         & iVirtualFirst:iVirtualLast)))))
-    end if
+        deltaAlpha = this%occupations(p,1) - this%occupations(q,1)
+        deltaBeta = this%occupations(p,2) - this%occupations(q,2)
 
-    ! Open-virtual rotations are governed by the alpha Hamiltonian
-    if (this%No > 0 .and. this%Nv > 0) then
-      residual = max(residual, maxval(abs(this%hamAlphaMo(iOpenFirst:iOpenLast,&
-         & iVirtualFirst:iVirtualLast))))
-    end if
+        occupationDifference = abs(deltaAlpha) + abs(deltaBeta)
+
+        if (occupationDifference > occupationTolerance) then
+          coupling = (deltaAlpha * this%hamAlphaMo(p,q) &
+              & + deltaBeta * this%hamBetaMo(p,q)) &
+              & / max(1.0_dp, occupationDifference)
+
+          residual = max(residual, abs(coupling))
+        end if
+      end do
+    end do
 
   end function TRoksCalc_getStationarityResidual
-
 
   !> Form the common ROKS Hamiltonian and return it to the AO basis
   subroutine TRoksCalc_buildEffectiveHamiltonian(this)

@@ -3230,7 +3230,7 @@ contains
       call buildDenseRoksHamiltonians(env, denseDesc, ints, neighbourList, nNeighbourSK,&
           & iSparseStart, img2CentCell, roks, SSqrReal, hybridXc, densityMatrix%deltaRhoIn,&
           & parallelKS, nNeighbourCam, orb, tPeriodic, errStatus)
-@:PROPAGATE_ERROR(errStatus)
+      @:PROPAGATE_ERROR(errStatus)
       call diagDenseRoksHamiltonian(env, denseDesc, electronicSolver, iScc, roks, HSqrReal,&
           & SSqrReal, errStatus)
       @:PROPAGATE_ERROR(errStatus)
@@ -3270,6 +3270,10 @@ contains
 
     call getFillingsAndBandEnergies(eigen, nEl, nSpin, tempElec, kWeight, tSpinSharedEf,&
         & tFillKSep, tFixEf, iDistribFn, Ef, filling, energy%Eband, energy%TS, energy%E0, deltaDftb)
+
+    if (allocated(roks)) then
+      call roks%setOccupations(filling(:,1,:))
+    end if
 
     call env%globalTimer%startTimer(globalTimers%densityMatrix)
     if (nSpin /= 4) then
