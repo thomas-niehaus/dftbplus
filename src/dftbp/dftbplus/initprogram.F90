@@ -1778,7 +1778,8 @@ contains
     if (allocated(this%roks)) then
       call this%roks%init(this%nEl, this%orb%nOrb, input%ctrl%roksInp%maxIterations,&
           & input%ctrl%roksInp%tolerance, input%ctrl%roksInp%damping,&
-          & input%ctrl%roksInp%writeDiagnostics, input%ctrl%roksInp%readEigenvectors)
+          & input%ctrl%roksInp%writeDiagnostics, input%ctrl%roksInp%readEigenvectors,&
+          & input%ctrl%roksInp%writeGroundStateProjection .and. isIoProc)
       if (allocated(input%ctrl%roksInp%hHubbard)) then
         this%roks%hHubbard = input%ctrl%roksInp%hHubbard
       end if

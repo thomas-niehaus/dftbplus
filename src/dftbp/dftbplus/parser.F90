@@ -1359,6 +1359,11 @@ contains
     call getChildValue(node, "RoksMaxIterations", ctrl%roksInp%maxIterations, 50)
     call getChildValue(node, "RoksTolerance", ctrl%roksInp%tolerance, 1.0e-8_dp)
     call getChildValue(node, "RoksReadEigenvectors", ctrl%roksInp%readEigenvectors, .false.)
+    call getChildValue(node, "RoksWriteGroundStateProjection",&
+        & ctrl%roksInp%writeGroundStateProjection, .false.)
+    if (ctrl%roksInp%writeGroundStateProjection .and. .not. ctrl%roksInp%readEigenvectors) then
+      call detailedError(node, "RoksWriteGroundStateProjection requires RoksReadEigenvectors = Yes")
+    end if
     if (ctrl%roksInp%maxIterations < 1) then
       call detailedError(node, "RoksMaxIterations must be a positive integer")
     end if

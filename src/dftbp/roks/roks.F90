@@ -43,6 +43,9 @@ module dftbp_roks_roks
     !> Whether initial common orbitals are read from eigenvec.bin
     logical :: readEigenvectors = .false.
 
+    !> Whether the ROKS transition is projected onto the reference ground-state orbitals
+    logical :: writeGroundStateProjection = .false.
+
     !> Species-resolved Hubbard-like parameters containing only the Hartree kernel
     real(dp), allocatable :: hHubbard(:)
 
@@ -78,6 +81,9 @@ module dftbp_roks_roks
 
     !> Original AO overlap matrix
     real(dp), allocatable :: overlap(:,:)
+
+    !> Closed-shell reference orbitals read from eigenvec.bin
+    real(dp), allocatable :: referenceCoefficients(:,:)
 
     !> Effective ROKS Hamiltonian in the MO basis
     real(dp), allocatable :: hamEffectiveMo(:,:)
@@ -127,7 +133,7 @@ contains
   !> orbitals. The excess alpha population defines the number of singly
   !> occupied open-shell orbitals. All remaining orbitals are virtual.
   subroutine TRoksCalc_init(this, nEl, nOrb, maxIterations, tolerance, damping, writeDiagnostics,&
-      & readEigenvectors)
+      & readEigenvectors, writeGroundStateProjection)
 
     !> ROKS calculation data
     class(TRoksCalc), intent(out) :: this
@@ -153,10 +159,14 @@ contains
     !> Whether initial common orbitals are read from eigenvec.bin
     logical, intent(in) :: readEigenvectors
 
+    !> Whether the ROKS transition is projected onto the reference ground-state orbitals
+    logical, intent(in) :: writeGroundStateProjection
+
     this%maxIterations = maxIterations
     this%tolerance = tolerance
     this%writeDiagnostics = writeDiagnostics
     this%readEigenvectors = readEigenvectors
+    this%writeGroundStateProjection = writeGroundStateProjection
     this%damping = damping
 
     if (size(nEl) /= 2) then
@@ -222,6 +232,9 @@ contains
     allocate(this%hamBetaMo(nRows, nCols), source=0.0_dp)
     allocate(this%hamEffective(nRows, nCols), source=0.0_dp)
     allocate(this%overlap(nRows, nCols), source=0.0_dp)
+    if (this%writeGroundStateProjection) then
+      allocate(this%referenceCoefficients(nRows, nCols), source=0.0_dp)
+    end if
     allocate(this%hamEffectiveMo(nRows, nCols), source=0.0_dp)
     allocate(this%coefficients(nRows, nCols), source=0.0_dp)
     allocate(this%eigenvalues(this%Nc + this%No + this%Nv), source=0.0_dp)

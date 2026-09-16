@@ -79,6 +79,9 @@ subroutine diagDenseRoksHamiltonian(env, denseDesc, electronicSolver, iScc, roks
         write(stdOut, "(A)") "--> ROKS: reading initial orbitals from eigenvec.bin"
       end if
       call readEigenvecs(roks%coefficients)
+      if (roks%writeGroundStateProjection) then
+        roks%referenceCoefficients(:,:) = roks%coefficients
+      end if
     else
       if (roks%writeDiagnostics) then
         write(stdOut, "(A)") "--> ROKS: initializing orbitals from spin-averaged Hamiltonian"

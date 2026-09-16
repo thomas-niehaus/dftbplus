@@ -161,6 +161,9 @@ module dftbp_dftbplus_inputdata
     !> Whether initial common orbitals are read from eigenvec.bin
     logical :: readEigenvectors = .false.
 
+    !> Whether the ROKS transition is projected onto the reference ground-state orbitals
+    logical :: writeGroundStateProjection = .false.
+
     !> Species-resolved Hubbard-like parameters containing only Hartree kernel
     real(dp), allocatable :: hHubbard(:)
 

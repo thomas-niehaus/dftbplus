@@ -56,6 +56,7 @@ module dftbp_timedep_linrespgrad
   !> Output files for results
   character(*), parameter :: transitionsOut = "TRA.DAT"
   character(*), parameter :: XplusYOut = "XplusY"
+  character(*), parameter :: XplusYTransitionsOut = "XplusY_TRANSITIONS.DAT"
   character(*), parameter :: excitedCoefsOut = "COEF.DAT"
   character(*), parameter :: excitationsOut = "EXC.DAT"
   character(*), parameter :: transDipOut = "TDP.DAT"
@@ -221,7 +222,7 @@ contains
     !> Casida parameters (number of transitions, index arrays and alike)
     type(TCasidaParameter) :: rpa
 
-    type(TFileDescr) :: fdTrans, fdTransDip, fdArnoldi, fdXPlusY, fdExc, fdTransQ
+    type(TFileDescr) :: fdTrans, fdTransDip, fdArnoldi, fdXPlusY, fdXPlusYTransitions, fdExc, fdTransQ
 
     !> Communication with ARPACK for progress information
     integer :: logfil, ndigit, mgetv0
@@ -557,6 +558,12 @@ contains
     if (this%writeXplusY) then
       if (this%writeXplusYAscii) then
         call openFile(fdXPlusY, XplusYOut // '.DAT', mode="w")
+        call openFile(fdXPlusYTransitions, XplusYTransitionsOut, mode="w")
+        write(fdXPlusYTransitions%unit, "(A)") "# index occupied virtual spin"
+        do i = 1, rpa%nxov_rd
+          call indxov(rpa%win, i, rpa%getIA, j, iLev, iSpin)
+          write(fdXPlusYTransitions%unit, "(4I10)") i, j, iLev, iSpin
+        end do
       else
         call openFile(fdXPlusY, XplusYOut // '.BIN', mode="wb")
       end if 

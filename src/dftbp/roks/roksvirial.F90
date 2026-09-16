@@ -1,6 +1,7 @@
 module dftbp_roks_roksvirial
 
   use dftbp_common_accuracy, only : dp
+  use dftbp_common_file, only : openFile, TFileDescr
   use dftbp_dftb_scc, only : TScc
   use dftbp_io_message, only : error, warning
   use dftbp_math_blasroutines, only : hemv, symm
@@ -121,6 +122,10 @@ contains
     holeWeight(1:nClosed) = spinOccupation(1:nClosed) / holeNorm
     electronWeight(nClosed + 1:nOrbTotal) = &
         & spinOccupation(nClosed + 1:nOrbTotal) / electronNorm
+
+    if (roks%writeGroundStateProjection) then
+      call writeGroundStateProjection(roks, nClosed, holeWeight, electronWeight)
+    end if
 
     allocate(overlapTimesCoefficients, mold=roks%coefficients)
     call symm(overlapTimesCoefficients, "L", roks%overlap, roks%coefficients)
@@ -279,5 +284,85 @@ contains
     end if
 
   end subroutine calculateRoksVirialIntegral
+
+
+  !> Write the ROKS transition amplitudes in the closed-shell reference MO basis
+  subroutine writeGroundStateProjection(roks, nClosed, holeWeight, electronWeight)
+
+    !> ROKS orbitals and the closed-shell orbitals used to initialize them
+    type(TRoksCalc), intent(in) :: roks
+
+    !> Number of occupied orbitals in the closed-shell reference
+    integer, intent(in) :: nClosed
+
+    !> Statistical weights of the ROKS hole orbitals
+    real(dp), intent(in) :: holeWeight(:)
+
+    !> Statistical weights of the ROKS electron orbitals
+    real(dp), intent(in) :: electronWeight(:)
+
+    integer :: iHole, iElectron, iOcc, iVirt, nOrbTotal
+    real(dp) :: amplitude, amplitudeNorm, pairWeight
+    real(dp), parameter :: weightTolerance = 1.0e-12_dp
+    real(dp), parameter :: outputTolerance = 1.0e-12_dp
+    real(dp), allocatable :: moOverlap(:,:)
+    real(dp), allocatable :: overlapTimesRoks(:,:)
+    real(dp), allocatable :: pairAmplitude(:,:)
+    type(TFileDescr) :: fd
+
+    if (.not. allocated(roks%referenceCoefficients)) then
+      call error("ROKS ground-state projection requires reference orbitals")
+    end if
+
+    nOrbTotal = size(roks%coefficients, dim=2)
+    allocate(overlapTimesRoks, mold=roks%coefficients)
+    allocate(moOverlap(nOrbTotal, nOrbTotal))
+    allocate(pairAmplitude(nClosed, nOrbTotal - nClosed))
+
+    call symm(overlapTimesRoks, "L", roks%overlap, roks%coefficients)
+    moOverlap = matmul(transpose(roks%referenceCoefficients), overlapTimesRoks)
+
+    call openFile(fd, "ROKS_GS_PROJECTION.DAT", mode="w")
+    write(fd%unit, "(A)") "# ROKS transition amplitudes in the closed-shell ground-state MO basis"
+    write(fd%unit, "(A)") "# hole electron pair_weight occupied virtual amplitude normalized_amplitude"
+
+    do iHole = 1, nClosed
+      if (holeWeight(iHole) <= weightTolerance) then
+        cycle
+      end if
+
+      do iElectron = nClosed + 1, nOrbTotal
+        if (electronWeight(iElectron) <= weightTolerance) then
+          cycle
+        end if
+
+        pairWeight = holeWeight(iHole) * electronWeight(iElectron)
+        do iOcc = 1, nClosed
+          do iVirt = nClosed + 1, nOrbTotal
+            pairAmplitude(iOcc,iVirt - nClosed) = 0.5_dp * (&
+                & moOverlap(iOcc,iHole) * moOverlap(iVirt,iElectron)&
+                & + moOverlap(iOcc,iElectron) * moOverlap(iVirt,iHole))
+          end do
+        end do
+
+        amplitudeNorm = sqrt(sum(pairAmplitude**2))
+        if (amplitudeNorm <= weightTolerance) then
+          call warning("ROKS ground-state projection has a zero particle-hole norm")
+          cycle
+        end if
+
+        do iOcc = 1, nClosed
+          do iVirt = nClosed + 1, nOrbTotal
+            amplitude = pairAmplitude(iOcc,iVirt - nClosed)
+            if (abs(amplitude / amplitudeNorm) > outputTolerance) then
+              write(fd%unit, "(2I8,ES24.15,2I8,2ES24.15)") iHole, iElectron, pairWeight,&
+                  & iOcc, iVirt, amplitude, amplitude / amplitudeNorm
+            end if
+          end do
+        end do
+      end do
+    end do
+
+  end subroutine writeGroundStateProjection
 
 end module dftbp_roks_roksvirial
