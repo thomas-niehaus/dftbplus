@@ -1,7 +1,7 @@
 module dftbp_roks_roksvirial
 
   use dftbp_common_accuracy, only : dp
-  use dftbp_common_file, only : openFile, TFileDescr
+  use dftbp_common_file, only : closeFile, openFile, TFileDescr
   use dftbp_dftb_scc, only : TScc
   use dftbp_io_message, only : error, warning
   use dftbp_math_blasroutines, only : hemv, symm
@@ -79,6 +79,7 @@ contains
     real(dp), allocatable :: qBlock(:,:)
     real(dp), allocatable :: onsite(:,:,:)
     real(dp), allocatable :: onsiteTimesQ(:,:)
+    type(TFileDescr) :: fdGamma, fdTransitionCharges
 
     if (roks%No /= 2) then
       call error("RoksVirial requires exactly two open-shell orbitals")
@@ -140,6 +141,24 @@ contains
 
     allocate(gammaTimesQ(nAtom))
 
+    if (roks%writeDiagnostics) then
+      call openFile(fdGamma, "ROKS_VIRIAL_GAMMA.DAT", mode="w")
+      write(fdGamma%unit, "(A)") "# Atomic Hartree gamma matrix used by the ROKS virial integral"
+      write(fdGamma%unit, "(A)") "# atom_i atom_j gamma_hartree"
+      do iAtom = 1, nAtom
+        do iLocal = 1, nAtom
+          write(fdGamma%unit, "(2I8,ES24.15)") iAtom, iLocal, gammaMatrix(iAtom,iLocal)
+        end do
+      end do
+      call closeFile(fdGamma)
+
+      call openFile(fdTransitionCharges, "ROKS_VIRIAL_TRANSITION_CHARGES.DAT", mode="w")
+      write(fdTransitionCharges%unit, "(A)") &
+          & "# Atomic transition charges used by the ROKS virial integral"
+      write(fdTransitionCharges%unit, "(A)") &
+          & "# hole electron pair_weight atom transition_charge"
+    end if
+
     if (allocated(roks%virialOnSiteElements)) then
       allocate(qBlock(orb%mOrb, orb%mOrb))
       allocate(onsite(orb%mOrb, orb%mOrb, 2))
@@ -199,6 +218,13 @@ contains
         call hemv(gammaTimesQ, gammaMatrix, qAtom)
         pairMullikenIntegral = dot_product(qAtom, gammaTimesQ)
         pairOnsiteIntegral = 0.0_dp
+
+        if (roks%writeDiagnostics) then
+          do iAtom = 1, nAtom
+            write(fdTransitionCharges%unit, "(2I8,ES24.15,I8,ES24.15)") &
+                & iHole, iElectron, pairWeight, iAtom, qAtom(iAtom)
+          end do
+        end if
 
         if (allocated(roks%virialOnSiteElements)) then
           do iAtom = 1, nAtom
@@ -269,6 +295,10 @@ contains
     end do
 
     roks%virialIntegral = virialMullikenIntegral + virialOnsiteIntegral
+
+    if (roks%writeDiagnostics) then
+      call closeFile(fdTransitionCharges)
+    end if
 
     if (roks%writeDiagnostics) then
       write(stdOut, "(A,1X,ES20.12)") "--> ROKS virial maximum transition-charge error:",&
@@ -362,6 +392,8 @@ contains
         end do
       end do
     end do
+
+    call closeFile(fd)
 
   end subroutine writeGroundStateProjection
 
