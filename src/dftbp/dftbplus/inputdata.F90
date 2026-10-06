@@ -453,7 +453,11 @@ module dftbp_dftbplus_inputdata
     !> Correction to energy from on-site matrix elements
     real(dp), allocatable :: onSiteElements(:,:,:,:)
 
-    !> Correction to dipole momements on-site matrix elements
+    !> Apply on-site matrix elements only in linear response.
+    logical :: tOnSiteResponseOnly = .false.
+
+    !> Correction to dipole moments from on-site matrix elements.
+    !! TODO: Apply these one-center dipole corrections in linear response.
     real(dp), allocatable :: onSiteDipole(:,:)
 
     !> Number of external charges

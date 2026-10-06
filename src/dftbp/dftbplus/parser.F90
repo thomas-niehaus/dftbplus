@@ -1633,6 +1633,7 @@ contains
           & dummyValue=.true.)
       if (associated(value1)) then
         allocate(ctrl%onSiteElements(slako%orb%mShell, slako%orb%mShell, 2, geo%nSpecies))
+        call getChildValue(child, "ResponseOnly", ctrl%tOnSiteResponseOnly, .false.)
         do iSp1 = 1, geo%nSpecies
           call getChildValue(child, trim(geo%speciesNames(iSp1))//"uu",&
               & ctrl%onSiteElements(:slako%orb%nShell(iSp1), :slako%orb%nShell(iSp1), 1, iSp1))

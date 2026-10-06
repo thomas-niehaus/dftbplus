@@ -1734,7 +1734,7 @@ contains
     end if
 
     ! On-site corrections
-    if (allocated(input%ctrl%onSiteElements)) then
+    if (allocated(input%ctrl%onSiteElements) .and. .not.input%ctrl%tOnSiteResponseOnly) then
       if (.not. (allocated(this%roks) .and. allocated(input%ctrl%roksInp%hHubbard))) then
         allocate(this%onSiteElements(this%orb%mShell, this%orb%mShell, 2, this%nType))
         this%onSiteElements(:,:,:,:) = input%ctrl%onSiteElements(:,:,:,:)
@@ -2677,7 +2677,7 @@ contains
         call error("This binary has been compiled without support for linear response&
             & calculations using the Arpack solver.")
       end if
-      isOnsiteCorrected = allocated(this%onSiteElements)
+      isOnsiteCorrected = allocated(input%ctrl%onSiteElements)
 
       call ensureLinRespConditions(this%tSccCalc, this%t3rd .or. this%t3rdFull, this%tRealHS,&
           & this%tPeriodic, this%tCasidaForces, this%solvation, this%isHybLinResp, this%nSpin,&
@@ -2719,13 +2719,13 @@ contains
           & input%ctrl%lrespini%tCoeffs .or. this%tPrintExcitedEigVecs .or.&
           & input%ctrl%lrespini%tWriteDensityMatrix)
 
-      if (allocated(this%onSiteElements) .and. this%tLinRespZVect) then
+      if (allocated(input%ctrl%onSiteElements) .and. this%tLinRespZVect) then
         call error("Excited state property evaluation currently incompatible with onsite&
             & corrections")
       end if
 
       call LinResp_init(this%linearResponse, input%ctrl%lrespini, this%nAtom, this%nEl(1),&
-          & this%nSpin, this%onSiteElements, isIoProc)
+          & this%nSpin, input%ctrl%onSiteElements, isIoProc)
 
     end if
 
